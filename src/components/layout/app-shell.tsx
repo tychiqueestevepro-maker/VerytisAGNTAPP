@@ -1,7 +1,8 @@
 "use client";
 
+import type { User } from "@supabase/supabase-js";
 import { motion } from "framer-motion";
-import { ChevronLeft, ChevronRight } from "lucide-react";
+import { ChevronLeft, ChevronRight, LogOut } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
@@ -18,23 +19,21 @@ import {
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { organizations, users } from "@/lib/db/mock-data";
+import { logout } from "@/lib/auth";
 import { cn } from "@/lib/utils";
 
 const navItems = [
   { href: "/dashboard", label: "Dashboard", icon: DashboardIcon },
   { href: "/activite", label: "Activité", icon: ActivityIcon },
-  { href: "/agents", label: "Agents", icon: AgentIcon },
+  { href: "/flows", label: "Flows", icon: AgentIcon },
   { href: "/documents", label: "Documents", icon: DocumentIcon },
   { href: "/integrations", label: "Intégrations", icon: IntegrationIcon },
   { href: "/parametres", label: "Paramètres", icon: SettingsIcon },
 ];
 
-export function AppShell({ children }: { children: React.ReactNode }) {
+export function AppShell({ children, user }: { children: React.ReactNode; user: any }) {
   const pathname = usePathname();
   const [collapsed, setCollapsed] = useState(false);
-  const user = users[0];
-  const organization = organizations[0];
 
   return (
     <div className="min-h-screen bg-black text-white">
@@ -114,13 +113,23 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               <div className="flex items-center gap-3 px-1">
                 <Avatar className="size-8 rounded-[8px] border border-white/10">
                   <AvatarFallback className="rounded-[8px] bg-[#151515] text-xs text-white">
-                    CM
+                    {user.email?.[0]?.toUpperCase() ?? "U"}
                   </AvatarFallback>
                 </Avatar>
                 {!collapsed ? (
-                  <div className="min-w-0">
-                    <p className="truncate text-sm text-white">{user.firstName} {user.lastName}</p>
-                    <p className="truncate text-xs text-white/42">{organization.name}</p>
+                  <div className="flex min-w-0 flex-1 items-center justify-between">
+                    <div className="min-w-0">
+                      <p className="truncate text-xs text-white/42">{user.email}</p>
+                    </div>
+                    <form action={logout}>
+                      <button
+                        type="submit"
+                        aria-label="Se déconnecter"
+                        className="text-white/35 transition hover:text-white"
+                      >
+                        <LogOut className="size-4" />
+                      </button>
+                    </form>
                   </div>
                 ) : null}
               </div>
@@ -134,7 +143,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         transition={{ duration: 0.24, ease: "easeOut" }}
         className="min-h-screen"
       >
-        <div className="mx-auto max-w-[1440px] px-7 py-6 md:px-10 lg:px-14">
+        <div className="w-full px-4 md:px-8 py-6">
           {children}
         </div>
       </motion.main>

@@ -6,24 +6,25 @@ import { IntegrationLogo } from "@/components/integrations/integration-logo";
 import { SectionHeading } from "@/components/layout/section-heading";
 import { StatusDot, statusLabel } from "@/components/layout/status-dot";
 import { TopLine } from "@/components/layout/top-line";
-import { activities, agents, dashboardMetrics, integrations } from "@/lib/db/mock-data";
+import { activities, dashboardMetrics, integrations } from "@/lib/db/mock-data";
+import { ClientFlow } from "@/types/flows";
 
 const fade = {
   initial: { opacity: 0, y: 12 },
   animate: { opacity: 1, y: 0 },
 };
 
-export function DashboardView() {
+export function DashboardView({ initialAgents = [] }: { initialAgents: ClientFlow[] }) {
   const { data } = useQuery({
     queryKey: ["dashboard"],
     queryFn: async () => ({
-      agents,
+      agents: initialAgents,
       activities,
       integrations,
       metrics: dashboardMetrics,
     }),
     initialData: {
-      agents,
+      agents: initialAgents,
       activities,
       integrations,
       metrics: dashboardMetrics,
@@ -59,11 +60,11 @@ export function DashboardView() {
               {data.agents.map((agent, index) => (
                 <div key={agent.id} className="group flex items-center justify-between gap-8 py-5 transition duration-200 hover:pl-2 hover:bg-white/[0.018]">
                   <div>
-                    <p className="text-lg text-white">{agent.name}</p>
-                    <p className="mt-1 text-sm text-white/40">dernière exécution : {agent.lastRun}</p>
+                    <p className="text-lg text-white">{agent.display_name}</p>
+                    <p className="mt-1 text-sm text-white/40">actif depuis : {new Date(agent.created_at).toLocaleDateString()}</p>
                   </div>
                   <div className="flex items-center gap-3 text-sm text-white/56">
-                    <StatusDot status={agent.status} pulse={agent.status === "actif"} />
+                    <StatusDot status={agent.status} pulse={agent.status === "active" || agent.status === "actif"} />
                     {statusLabel(agent.status)}
                   </div>
                 </div>
