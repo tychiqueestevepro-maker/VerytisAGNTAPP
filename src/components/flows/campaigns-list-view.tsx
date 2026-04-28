@@ -107,7 +107,7 @@ const WIZARD_STEPS = [
   { key: "offer", icon: Package, title: "Votre offre", subtitle: "Décrivez ce que vous vendez en 2-3 phrases." },
   { key: "icp", icon: Target, title: "Cible ICP", subtitle: "Secteurs et décideurs à privilégier." },
   { key: "location", icon: MapPin, title: "Localisation", subtitle: "Zones géographiques cibles." },
-  { key: "sources", icon: Search, title: "Sources", subtitle: "Canaux de recherche de prospects." },
+  { key: "sources", icon: Search, title: "Sources de leads", subtitle: "Canaux de recherche de prospects." },
   { key: "tone", icon: MessageSquare, title: "Ton des messages", subtitle: "Style rédactionnel de l'IA." },
   { key: "ops", icon: Settings2, title: "Règles opérationnelles", subtitle: "Volume et critères d'injection." },
 ];
@@ -553,18 +553,26 @@ export function CampaignsListView({
 
                   {currentStep === 3 && (
                     <div className="space-y-3">
-                      {["LinkedIn", "Google Maps", "Annuaires sectoriels", "Base de données clients"].map(s => {
-                        const active = sources.includes(s);
+                      {[
+                        { id: "LinkedIn", title: "LinkedIn ciblé", desc: "Recherche et qualification de profils professionnels" },
+                        { id: "Google Maps", title: "Prospection locale", desc: "Identification d’entreprises via zones géographiques" },
+                        { id: "Annuaires sectoriels", title: "Données sectorielles", desc: "Accès à des bases spécialisées par industrie" },
+                        { id: "Base de données clients", title: "Base interne", desc: "Exploitation de vos données clients existantes" }
+                      ].map(s => {
+                        const active = sources.includes(s.id);
                         return (
                           <button
-                            key={s}
-                            onClick={() => toggleTag(sources, s, setSources)}
-                            className={`w-full h-14 rounded-2xl border px-6 flex items-center justify-between transition-all ${
+                            key={s.id}
+                            onClick={() => toggleTag(sources, s.id, setSources)}
+                            className={`w-full p-4 rounded-2xl border flex items-center justify-between transition-all text-left ${
                               active ? "bg-white/10 border-white/20 text-white" : "bg-white/[0.02] border-white/5 text-white/40 hover:bg-white/5"
                             }`}
                           >
-                            <span className="text-sm font-medium">{s}</span>
-                            {active && <CheckCircle2 className="size-4 text-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.3)]" />}
+                            <div>
+                              <p className="text-sm font-bold text-white mb-1">{s.title}</p>
+                              <p className="text-[10px] text-white/40 leading-relaxed">{s.desc}</p>
+                            </div>
+                            {active && <CheckCircle2 className="size-5 text-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.3)] shrink-0 ml-4" />}
                           </button>
                         );
                       })}

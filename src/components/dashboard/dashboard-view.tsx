@@ -64,7 +64,7 @@ export function DashboardView({ initialAgents = [] }: { initialAgents: ClientFlo
                     <p className="mt-1 text-sm text-white/40">actif depuis : {new Date(agent.created_at).toLocaleDateString()}</p>
                   </div>
                   <div className="flex items-center gap-3 text-sm text-white/56">
-                    <StatusDot status={agent.status} pulse={agent.status === "active" || agent.status === "actif"} />
+                    <StatusDot status={agent.status} pulse={agent.status === "active"} />
                     {statusLabel(agent.status)}
                   </div>
                 </div>
