@@ -30,16 +30,19 @@ import {
 import { Button } from "@/components/ui/button";
 import { analyzeWebsite, type AnalysisResult } from "@/lib/flows/analyze";
 
-type FlowStatus = "active" | "paused" | "setup_required" | "disabled";
+type CampaignStatus = "active" | "paused" | "archived" | "draft";
 
 interface Campaign {
   id: string;
   display_name: string;
-  status: FlowStatus;
+  status: CampaignStatus;
   created_at: string;
   config?: {
-    target_icp?: { sectors?: string[]; locations?: string[] };
-    prospection?: { prospects_per_day?: number; sector?: string; location?: string };
+    target_icp?: { sectors?: string[]; locations?: string[]; company_size?: string[] };
+    prospection?: { prospects_per_day?: number; sector?: string; location?: string; search_time?: string };
+    personas?: string[];
+    tone?: string;
+    injection?: { auto_add?: boolean; prioritize_linkedin?: boolean };
   };
 }
 
@@ -58,8 +61,8 @@ const StatusDot = ({ status }: { status: string }) => {
 const STATUS_LABEL: Record<string, string> = {
   active: "Actif",
   paused: "En pause",
-  setup_required: "Configuration requise",
-  disabled: "Désactivé",
+  archived: "Archivé",
+  draft: "Brouillon",
 };
 
 // ─── Scan Lines ──────────────────────────────────────────────────────────────

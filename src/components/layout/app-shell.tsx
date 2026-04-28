@@ -36,7 +36,10 @@ export function AppShell({ children, user }: { children: React.ReactNode; user: 
   const [collapsed, setCollapsed] = useState(false);
 
   return (
-    <div className="min-h-screen bg-black text-white">
+    <div 
+      className="min-h-screen bg-black text-white"
+      style={{ '--sidebar-width': collapsed ? '64px' : '220px' } as any}
+    >
       <motion.aside
         animate={{ width: collapsed ? 64 : 220 }}
         transition={{ duration: 0.24, ease: "easeOut" }}

@@ -4,7 +4,7 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getUserWithProfile } from "@/lib/auth";
 
 export async function importProspectsCSV(
-  flowId: string,
+  campaignId: string,
   prospects: any[]
 ) {
   const user = await getUserWithProfile();
@@ -29,12 +29,12 @@ export async function importProspectsCSV(
 
     return {
       client_id: clientId,
-      flow_id: flowId,
+      campaign_id: campaignId,
       email: p.email || null,
-      company_name: p.companyName || p.companyDomain || "Unknown",
+      company_name: p.companyName || p.companyDomain || null,
       website: p.companyDomain || null,
-      decision_maker: decisionMaker || "Unknown",
-      role: p.jobTitle || "Unknown",
+      decision_maker: decisionMaker || null,
+      role: p.jobTitle || null,
       linkedin_url: p.linkedInURL || null,
       phone: p.phone || null,
       status: "discovered",

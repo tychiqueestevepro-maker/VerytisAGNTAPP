@@ -28,12 +28,12 @@ export default async function FlowsPage() {
     <>
       <TopLine />
       <ListPage
-        title="Flows"
-        emptyState="Aucun flow activé pour ce client. Les flows sont activés selon votre offre."
+        title="Flux Opérationnels"
+        emptyState="Aucun flux activé pour cette organisation. Les flux sont activés selon votre offre."
         rows={(flows || []).map((flow) => ({
           id: flow.id,
-          title: flow.flow_key === "prospecting" ? "Prospection IA" : flow.display_name,
-          detail: flow.description || "Aucune description fournie.",
+          title: flow.display_name,
+          detail: flow.description || `Gestion des campagnes de ${flow.display_name.toLowerCase()}.`,
           status: flow.status,
           link: FLOW_ROUTES[flow.flow_key] ?? `/flows/${flow.flow_key}`,
         }))}

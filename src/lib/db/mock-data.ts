@@ -25,10 +25,7 @@ export const documents: DocumentItem[] = [
 ];
 
 export const integrations: Integration[] = [
-  { id: "int_1", name: "Gmail", status: "connecte" },
-  { id: "int_2", name: "LinkedIn", status: "connecte" },
-  { id: "int_3", name: "CRM", status: "en_attente" },
-  { id: "int_4", name: "Google Sheets", status: "connecte" },
+  { id: "int_2", name: "LinkedIn", status: "en_attente" },
 ];
 
 export const dashboardMetrics = {

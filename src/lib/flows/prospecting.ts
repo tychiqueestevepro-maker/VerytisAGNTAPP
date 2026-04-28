@@ -3,7 +3,7 @@
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getUserWithProfile } from "@/lib/auth";
 
-export async function getProspectingData(flowId?: string) {
+export async function getProspectingData(campaignId?: string) {
   const user = await getUserWithProfile();
   
   if (!user || !user.profile?.client_id) {
@@ -12,19 +12,30 @@ export async function getProspectingData(flowId?: string) {
 
   const supabase = await createSupabaseServerClient();
   
-  // 1. Fetch campaigns (flows with flow_key = 'prospecting')
-  const { data: campaigns, error: campaignsError } = await supabase
+  // 1. Fetch the Prospecting Flow ID
+  const { data: flow } = await supabase
     .from("client_flows")
-    .select("*")
+    .select("id")
     .eq("client_id", user.profile.client_id)
     .eq("flow_key", "prospecting")
+    .single();
+
+  if (!flow) {
+    return { campaigns: [], prospects: [], activities: [], error: null };
+  }
+
+  // 2. Fetch campaigns for this flow
+  const { data: campaigns, error: campaignsError } = await supabase
+    .from("campaigns")
+    .select("*")
+    .eq("flow_id", flow.id)
     .order("created_at", { ascending: false });
 
   if (campaignsError) {
     return { error: "Erreur lors du chargement des campagnes" };
   }
 
-  // 2. Fetch prospects (scoped to flow_id if provided)
+  // 3. Fetch prospects (scoped to campaign_id if provided)
   let prospectsQuery = supabase
     .from("prospects")
     .select("id, company_name, decision_maker, role, fit_score, status, priority")
@@ -32,13 +43,13 @@ export async function getProspectingData(flowId?: string) {
     .order("created_at", { ascending: false })
     .limit(50);
     
-  if (flowId) {
-    prospectsQuery = prospectsQuery.eq("flow_id", flowId);
+  if (campaignId) {
+    prospectsQuery = prospectsQuery.eq("campaign_id", campaignId);
   }
 
   const { data: prospects, error: prospectsError } = await prospectsQuery;
 
-  // 3. Fetch recent activity from agent_runs
+  // 4. Fetch recent activity from agent_runs
   const { data: activities, error: actError } = await supabase
     .from("agent_runs")
     .select("id, action:run_type, entity_type:status, created_at")

@@ -1,4 +1,5 @@
 export type FlowStatus = 'setup_required' | 'active' | 'paused' | 'disabled';
+export type CampaignStatus = 'active' | 'paused' | 'archived' | 'draft';
 
 export interface ClientFlow {
   id: string;
@@ -8,8 +9,18 @@ export interface ClientFlow {
   description: string | null;
   status: FlowStatus;
   route: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface Campaign {
+  id: string;
+  flow_id: string;
+  display_name: string;
+  description: string | null;
+  status: CampaignStatus;
   config: any;
-  workflow_id: string | null;
+  sequence_id: string | null;
   created_at: string;
   updated_at: string;
 }

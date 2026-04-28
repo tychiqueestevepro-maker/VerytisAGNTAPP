@@ -25,20 +25,36 @@ import {
   Edit2,
   Settings,
   Loader2,
-  Upload
+  Upload,
+  Trash2,
+  Trash,
+  Globe,
+  Building2,
+  Users,
+  Info,
+  MapPin,
+  ExternalLink,
+  Link,
+  Flame,
+  MailSearch,
+  ChevronRight,
+  CircleSlash,
+  HelpCircle,
+  Plus
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { SequenceBuilderModal } from "./sequence-builder";
 
 // --- Types ---
-type FlowStatus = "active" | "paused" | "setup_required" | "disabled";
+type CampaignStatus = "active" | "paused" | "archived" | "draft";
 
 interface Campaign {
   id: string;
   display_name: string;
-  status: FlowStatus;
+  status: CampaignStatus;
   created_at: string;
   config?: any;
+  sequence_id?: string | null;
 }
 
 interface Prospect {
@@ -49,6 +65,19 @@ interface Prospect {
   fit_score: number;
   status: string;
   priority: string;
+  photo_url?: string | null;
+  website?: string | null;
+  location?: string | null;
+  linkedin_url?: string | null;
+  email?: string | null;
+  extra_data?: any;
+  company?: {
+    industry?: string | null;
+    size_range?: string | null;
+    description?: string | null;
+    linkedin_url?: string | null;
+    location?: string | null;
+  } | null;
 }
 
 interface ActivityLog {
@@ -63,14 +92,49 @@ interface ActivityLog {
 const STATUS_LABEL: Record<string, string> = {
   active: "Actif",
   paused: "En pause",
-  setup_required: "Configuration requise",
-  disabled: "Désactivé",
+  archived: "Archivé",
+  draft: "Brouillon",
 };
 
 const StatusDot = ({ status }: { status: string }) => {
   if (status === "active") return <span className="flex size-2 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]"></span>;
   if (status === "paused") return <span className="flex size-2 rounded-full bg-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.5)]"></span>;
   return <span className="flex size-2 rounded-full bg-zinc-500"></span>;
+};
+
+const ProspectAvatar = ({ name, photoUrl, colorIndex }: { name: string; photoUrl?: string | null; colorIndex: number }) => {
+  if (photoUrl) {
+    return (
+      <div className="size-10 rounded-full border border-white/10 overflow-hidden shrink-0">
+        <img src={photoUrl} alt={name} className="size-full object-cover" onError={(e) => {
+          (e.target as HTMLImageElement).style.display = 'none';
+        }} />
+      </div>
+    );
+  }
+
+  const initials = name
+    .split(" ")
+    .map((n) => n[0])
+    .join("")
+    .slice(0, 2)
+    .toUpperCase();
+  
+  const colors = [
+    "bg-blue-500/20 text-blue-400 border-blue-500/30",
+    "bg-purple-500/20 text-purple-400 border-purple-500/30",
+    "bg-emerald-500/20 text-emerald-400 border-emerald-500/30",
+    "bg-amber-500/20 text-amber-400 border-amber-500/30",
+    "bg-rose-500/20 text-rose-400 border-rose-500/30",
+  ];
+  
+  const colorClass = colors[colorIndex % colors.length];
+
+  return (
+    <div className={`size-10 rounded-full border flex items-center justify-center font-bold text-xs shrink-0 ${colorClass}`}>
+      {initials || <User className="size-4" />}
+    </div>
+  );
 };
 
 // ============================================================================
@@ -417,7 +481,7 @@ function SettingsModal({ onClose, campaignName, campaign }: { onClose: () => voi
     
     setIsDeleting(true);
     const { setCampaignStatus } = await import("@/lib/flows/actions");
-    const result = await setCampaignStatus(campaign.id, "disabled");
+    const result = await setCampaignStatus(campaign.id, "archived");
     
     if (result.success) {
       router.push("/flows/prospecting");
@@ -641,8 +705,12 @@ export function CampaignDashboardView({
 }) {
   const router = useRouter();
   const [isFlowModalOpen, setIsFlowModalOpen] = useState(false);
+  const [isProspectsModalOpen, setIsProspectsModalOpen] = useState(false);
+  const [selectedProspect, setSelectedProspect] = useState<Prospect | null>(null);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isCsvModalOpen, setIsCsvModalOpen] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [isDeleting, setIsDeleting] = useState(false);
   const [campaignName, setCampaignName] = useState(campaign.display_name || "Campagne Sans Nom");
   const [isEditingName, setIsEditingName] = useState(false);
   const nameInputRef = useRef<HTMLInputElement>(null);
@@ -671,6 +739,32 @@ export function CampaignDashboardView({
       alert(result.error || "Erreur lors du changement de statut");
     }
     setIsStatusLoading(false);
+  };
+
+  const handleDelete = async (ids: string[]) => {
+    if (!confirm(`Êtes-vous sûr de vouloir supprimer ${ids.length} contact(s) ?`)) return;
+    setIsDeleting(true);
+    const { deleteProspects } = await import("@/lib/flows/actions");
+    const res = await deleteProspects(ids);
+    if (res.success) {
+      setSelectedIds([]);
+      router.refresh();
+    } else {
+      alert(res.error);
+    }
+    setIsDeleting(false);
+  };
+
+  const toggleSelectAll = () => {
+    if (selectedIds.length === prospects.length) {
+      setSelectedIds([]);
+    } else {
+      setSelectedIds(prospects.map(p => p.id));
+    }
+  };
+
+  const toggleSelectOne = (id: string) => {
+    setSelectedIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
   };
 
   const isPaused = campaign.status === "paused";
@@ -831,9 +925,18 @@ export function CampaignDashboardView({
         <div className="grid grid-cols-1 xl:grid-cols-3 gap-8">
           <div className="xl:col-span-2">
             <div className="flex flex-col 2xl:flex-row 2xl:items-center justify-between mb-6 gap-4">
-              <h2 className="text-xl font-semibold flex items-center gap-2 shrink-0">
-                <User className="size-5 text-white/40" /> Contacts de la campagne
-              </h2>
+              <div className="flex items-center justify-between w-full 2xl:w-auto">
+                <h2 className="text-xl font-semibold flex items-center gap-2 shrink-0">
+                  <User className="size-5 text-white/40" /> Contacts de la campagne
+                </h2>
+                <button 
+                  onClick={() => setIsProspectsModalOpen(true)}
+                  className="p-2 hover:bg-white/5 rounded-lg transition-colors group/zoom 2xl:ml-2"
+                  title="Agrandir la liste"
+                >
+                  <Maximize2 className="size-4 text-white/20 group-hover/zoom:text-white transition-colors" />
+                </button>
+              </div>
               <div className="flex flex-wrap items-center gap-3">
                 <div className="relative">
                   <Search className="size-4 text-white/40 absolute left-3 top-1/2 -translate-y-1/2" />
@@ -851,23 +954,30 @@ export function CampaignDashboardView({
               </div>
             </div>
 
-            <div className="bg-white/[0.02] border border-white/10 rounded-2xl">
-              <table className="w-full text-left text-sm">
-                <thead className="bg-white/5 border-b border-white/10 text-white/40 text-[10px] uppercase tracking-widest sticky top-0 z-30">
+            <div className="bg-[#050505] border border-[#1F1F1F] rounded-2xl overflow-hidden shadow-2xl">
+              <table className="w-full text-left text-sm relative">
+                <thead className={`bg-[#080808] border-b border-[#1F1F1F] text-white/20 text-[10px] uppercase tracking-[0.2em] font-bold sticky top-0 ${isProspectsModalOpen ? 'z-10' : 'z-30'}`}>
                   <tr>
-                    <th className="px-6 py-4 font-bold">Contact</th>
-                    <th className="px-6 py-4 font-bold">Rôle</th>
-                    <th className="px-6 py-4 font-bold">Score ICP</th>
-                    <th className="px-6 py-4 font-bold">Statut</th>
-                    <th className="px-6 py-4 font-bold text-right relative">
-                      <button 
-                        onClick={() => setIsFilterOpen(!isFilterOpen)} 
-                        className={`inline-flex items-center gap-2 px-3 py-1 rounded-md transition-all ${isFilterOpen ? "bg-white/10 text-white" : "hover:bg-white/5 hover:text-white/60"}`}
-                      >
-                        <Filter className="size-3" />
-                        <span>Filtrer</span>
-                        <ChevronDown className={`size-3 transition-transform ${isFilterOpen ? "rotate-180" : ""}`} />
-                      </button>
+                    <th className="pl-6 py-4 w-10">
+                      <input 
+                        type="checkbox" 
+                        checked={selectedIds.length > 0 && selectedIds.length === prospects.length}
+                        onChange={toggleSelectAll}
+                        className="size-4 rounded border-white/10 bg-white/5 checked:bg-blue-500 transition-colors cursor-pointer"
+                      />
+                    </th>
+                    <th className="px-6 py-4 font-bold">Prospect</th>
+                    <th className="px-6 py-4 font-bold text-center">Score ICP</th>
+                    <th className="px-6 py-4 font-bold text-center">Statut</th>
+                        <th className="px-6 py-4 font-bold text-right relative">
+                          <button 
+                            onClick={() => setIsFilterOpen(!isFilterOpen)} 
+                            className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-lg transition-all border ${isFilterOpen ? "bg-white/10 border-white/20 text-white" : "border-transparent text-white/40 hover:bg-white/[0.03] hover:text-white/60"}`}
+                          >
+                            <Filter className="size-3" />
+                            <span className="text-[10px] uppercase tracking-widest">Filtrer</span>
+                            <ChevronDown className={`size-3 transition-transform ${isFilterOpen ? "rotate-180" : ""}`} />
+                          </button>
 
                       <AnimatePresence>
                         {isFilterOpen && (
@@ -921,25 +1031,91 @@ export function CampaignDashboardView({
                   {prospects.filter(p => (filterStatus === "all" || p.status === filterStatus) && (p.fit_score || 0) >= filterScore).length === 0 ? (
                     <tr><td colSpan={4} className="px-6 py-8 text-center text-white/40">Aucun contact trouvé.</td></tr>
                   ) : (
-                    prospects.filter(p => (filterStatus === "all" || p.status === filterStatus) && (p.fit_score || 0) >= filterScore).map(p => (
-                      <tr key={p.id} className="hover:bg-white/[0.02] transition-colors group cursor-pointer">
-                        <td className="px-6 py-4">
-                          <p className="font-medium text-white">{p.decision_maker || "Inconnu"}</p>
-                          <p className="text-xs text-white/40 mt-0.5">{p.company_name}</p>
+                    prospects.filter(p => (filterStatus === "all" || p.status === filterStatus) && (p.fit_score || 0) >= filterScore).map((p, i) => {
+                      const isSelected = selectedIds.includes(p.id);
+                      return (
+                        <tr key={p.id} className={`hover:bg-white/[0.02] transition-colors group cursor-pointer border-b border-white/5 last:border-0 ${isSelected ? "bg-blue-500/5" : ""}`}>
+                          <td className="pl-6 py-4" onClick={(e) => e.stopPropagation()}>
+                            <input 
+                              type="checkbox" 
+                              checked={isSelected}
+                              onChange={() => toggleSelectOne(p.id)}
+                              className="size-4 rounded border-white/10 bg-white/5 checked:bg-blue-500 transition-colors cursor-pointer"
+                            />
+                          </td>
+                          <td className="px-6 py-4" onClick={() => toggleSelectOne(p.id)}>
+                            <div className="flex items-center gap-4">
+                            <ProspectAvatar name={p.decision_maker || p.company_name} photoUrl={p.photo_url} colorIndex={i} />
+                            <div>
+                              <p className="font-bold text-[15px] text-white group-hover:text-blue-400 transition-colors">
+                                {p.decision_maker ? (p.decision_maker.split(/[,|•-]/)[0].trim()) : "Inconnu"}
+                              </p>
+                              <p className="text-xs text-white/40 mt-0.5">
+                                <span className="text-white/60 font-medium">
+                                  {p.role || (p.decision_maker?.includes(' at ') ? p.decision_maker.split(' at ')[1] : "Décideur")}
+                                </span>
+                                {p.company_name && (
+                                  <>
+                                    <span className="mx-1.5 opacity-30">@</span>
+                                    <span className="text-white/80">{p.company_name}</span>
+                                  </>
+                                )}
+                              </p>
+                            </div>
+                          </div>
                         </td>
-                        <td className="px-6 py-4 text-white/70">{p.role || "Non défini"}</td>
-                        <td className="px-6 py-4">
-                          <span className="px-2.5 py-1 rounded-md text-xs font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">{p.fit_score || 0}/100</span>
+                        <td className="px-6 py-4 text-center">
+                          <span className={`px-2.5 py-1 rounded-md text-[10px] font-bold border ${
+                            (p.fit_score || 0) > 80 ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20" :
+                            (p.fit_score || 0) > 50 ? "bg-blue-500/10 text-blue-400 border-blue-500/20" :
+                            "bg-white/5 text-white/40 border-white/10"
+                          }`}>
+                            {p.fit_score || 0}/100
+                          </span>
                         </td>
-                        <td className="px-6 py-4 text-white/60 capitalize">{p.status}</td>
+                        <td className="px-6 py-4 text-center">
+                          <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-white/5 border border-white/10">
+                            <div className={`size-1.5 rounded-full ${
+                              p.status === 'replied' ? 'bg-emerald-500' :
+                              p.status === 'contacted' ? 'bg-blue-500' :
+                              'bg-white/20'
+                            }`} />
+                            <span className="text-[10px] font-bold uppercase tracking-wider text-white/60">
+                              {{
+                                discovered: "Découvert",
+                                qualified: "Qualifié",
+                                disqualified: "Non qualifié",
+                                contacted: "Contacté",
+                                replied: "Répondu",
+                                meeting_booked: "Rendez-vous"
+                              }[p.status] || p.status}
+                            </span>
+                          </div>
+                        </td>
                         <td className="px-6 py-4 text-right">
-                          <Button variant="ghost" size="sm" className="opacity-0 group-hover:opacity-100 transition-opacity text-white/40 hover:text-white">
-                            <MoreHorizontal className="size-4" />
-                          </Button>
+                          <div className="flex items-center justify-end gap-2">
+                            <Button 
+                              variant="ghost" 
+                              size="sm" 
+                              onClick={(e) => { e.stopPropagation(); handleDelete([p.id]); }}
+                              className="opacity-0 group-hover:opacity-100 transition-opacity text-white/20 hover:text-red-400 size-8 p-0"
+                            >
+                              <Trash2 className="size-4" />
+                            </Button>
+                            <Button 
+                              variant="outline" 
+                              size="sm" 
+                              className="border-white/10 hover:bg-white/5 opacity-0 group-hover:opacity-100 transition-opacity"
+                              onClick={(e) => { e.stopPropagation(); setSelectedProspect(p); setIsProspectsModalOpen(true); }}
+                            >
+                              Détails
+                            </Button>
+                          </div>
                         </td>
                       </tr>
-                    ))
-                  )}
+                    );
+                  })
+                )}
                 </tbody>
               </table>
             </div>
@@ -994,6 +1170,318 @@ export function CampaignDashboardView({
       </div>
 
       <AnimatePresence>
+        {isProspectsModalOpen && (
+          <div className="fixed inset-0 z-[25] flex flex-col bg-[#050505]">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="relative w-full h-full bg-[#050505] flex flex-col overflow-hidden"
+              style={{ paddingLeft: 'var(--sidebar-width, 0px)' }}
+            >
+              {/* TOP HEADER */}
+              <div className="px-8 py-4 border-b border-[#1F1F1F] flex items-center justify-between shrink-0 bg-[#080808]/50 backdrop-blur-xl">
+                <div className="flex items-center gap-8">
+                  <div className="flex items-center gap-3">
+                    <div className="p-2.5 rounded-xl bg-blue-500/10 text-blue-400 border border-blue-500/20">
+                      <User className="size-5" />
+                    </div>
+                    <div>
+                      <h2 className="text-lg font-bold text-white tracking-tight">Contacts</h2>
+                      <p className="text-[10px] text-white/30 uppercase tracking-widest font-bold">{prospects.length} prospects</p>
+                    </div>
+                  </div>
+                  
+                  {/* SUB TABS */}
+                  <div className="flex items-center bg-black/40 p-1 rounded-xl border border-[#1F1F1F]">
+                    <button className="px-5 py-1.5 rounded-lg bg-white/[0.06] text-white text-[11px] font-bold uppercase tracking-wider transition-all">Tous</button>
+                    <button className="px-5 py-1.5 rounded-lg text-white/40 text-[11px] font-bold uppercase tracking-wider hover:text-white transition-all">Segments</button>
+                    <button className="px-5 py-1.5 rounded-lg text-white/40 text-[11px] font-bold uppercase tracking-wider hover:text-white transition-all">Listes</button>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-4">
+                  <div className="relative group">
+                    <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 size-4 text-white/20 group-focus-within:text-blue-400 transition-colors" />
+                    <input 
+                      type="text" 
+                      placeholder="Rechercher un prospect..." 
+                      className="bg-black/40 border border-[#1F1F1F] rounded-xl pl-10 pr-4 py-2.5 text-sm text-white focus:outline-none focus:border-blue-500/50 focus:ring-1 focus:ring-blue-500/20 w-[280px] transition-all"
+                    />
+                  </div>
+                  <Button variant="outline" className="border-[#1F1F1F] bg-black/40 text-white/60 hover:text-white gap-2 h-10 rounded-xl px-4 text-xs font-bold uppercase tracking-wider">
+                    <Filter className="size-3.5" /> Filtres
+                  </Button>
+                  <div className="w-[1px] h-6 bg-[#1F1F1F] mx-1" />
+                  <Button className="bg-blue-600 hover:bg-blue-500 text-white gap-2 h-10 rounded-xl px-4 text-xs font-bold uppercase tracking-wider shadow-lg shadow-blue-600/10 border-t border-blue-400/20">
+                    <Zap className="size-3.5" /> Ajouter des leads
+                  </Button>
+                  <button 
+                    onClick={() => { setIsProspectsModalOpen(false); setSelectedProspect(null); }}
+                    className="p-2 hover:bg-white/5 rounded-xl transition-all text-white/20 hover:text-white ml-2"
+                  >
+                    <X className="size-6" />
+                  </button>
+                </div>
+              </div>
+              <div className="flex-1 overflow-hidden flex">
+                <div className={`flex-1 overflow-auto p-8 ${selectedProspect ? 'hidden lg:block lg:border-r lg:border-[#1F1F1F]' : ''}`}>
+                  <div className="border border-[#1F1F1F] rounded-2xl overflow-hidden bg-[#050505] shadow-2xl">
+                  <table className="w-full text-left text-sm">
+                    <thead className="bg-[#080808]/80 border-b border-[#1F1F1F] text-white/20 text-[10px] uppercase tracking-[0.2em] font-bold sticky top-0 z-30 backdrop-blur-md">
+                      <tr>
+                        <th className="pl-6 py-5 w-12 text-center">
+                          <input 
+                            type="checkbox" 
+                            checked={selectedIds.length > 0 && selectedIds.length === prospects.length}
+                            onChange={toggleSelectAll}
+                            className="size-4 rounded border-[#1F1F1F] bg-black/40 text-blue-500 focus:ring-blue-500/20 cursor-pointer"
+                          />
+                        </th>
+                        <th className="px-6 py-5 font-bold">Contact</th>
+                        <th className="px-6 py-5 font-bold">Signal</th>
+                        <th className="px-6 py-5 font-bold">Pertinence</th>
+                        <th className="px-6 py-5 font-bold">Email</th>
+                        <th className="px-6 py-5 font-bold text-right">Détails</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-[#1F1F1F]/50">
+                      {prospects.map((p, i) => {
+                        const isSelected = selectedIds.includes(p.id);
+                        return (
+                          <tr 
+                            key={`modal-${p.id}`} 
+                            onClick={() => setSelectedProspect(p)}
+                            className={`group cursor-pointer transition-all hover:bg-white/[0.015] ${selectedProspect?.id === p.id ? 'bg-blue-500/[0.03]' : ''} ${isSelected ? "bg-blue-500/[0.02]" : ""}`}
+                          >
+                            <td className="pl-6 py-5 w-12 text-center" onClick={(e) => e.stopPropagation()}>
+                              <input 
+                                type="checkbox" 
+                                checked={isSelected}
+                                onChange={() => toggleSelectOne(p.id)}
+                                className="size-4 rounded border-[#1F1F1F] bg-black/40 text-blue-500 focus:ring-blue-500/20 cursor-pointer"
+                              />
+                            </td>
+                            <td className="px-6 py-5">
+                              <div className="flex items-center gap-4">
+                                <div className="group-hover:scale-105 transition-transform duration-300">
+                                  <ProspectAvatar name={p.decision_maker || p.company_name} photoUrl={p.photo_url} colorIndex={i} />
+                                </div>
+                                <div className="min-w-0">
+                                  <div className="flex items-center gap-1.5 mb-0.5">
+                                    <p className="font-bold text-[15px] text-white/90 truncate group-hover:text-white transition-colors">
+                                      {p.decision_maker ? (p.decision_maker.split(/[,|•-]/)[0].trim()) : "Inconnu"}
+                                    </p>
+                                    <div className="text-blue-400/30 group-hover:text-blue-400 transition-colors">
+                                      <Link className="size-3" />
+                                    </div>
+                                  </div>
+                                  <div className="flex items-center gap-1.5 text-[11px] text-white/30 uppercase tracking-wider font-bold">
+                                    <span className="truncate max-w-[120px]">{p.role || "Décideur"}</span>
+                                    <span className="text-white/10">•</span>
+                                    <span className="truncate text-white/50">{p.company_name}</span>
+                                  </div>
+                                </div>
+                              </div>
+                            </td>
+                            <td className="px-6 py-5">
+                              <div className="flex flex-col gap-1 max-w-[260px]">
+                                <p className="text-[13px] text-white/70 line-clamp-1 font-medium group-hover:text-white transition-colors">
+                                  {p.status === 'replied' ? 'Intérêt confirmé via Email' : 
+                                   p.status === 'contacted' ? 'Séquence active : Step 2' :
+                                   `Vient d'engager avec un post LinkedIn`}
+                                </p>
+                                <p className="text-[11px] text-white/20 truncate uppercase tracking-widest font-bold">
+                                  {p.company?.industry || 'Technologie'} • Il y a 2h
+                                </p>
+                              </div>
+                            </td>
+                            <td className="px-6 py-5">
+                              <div className="flex flex-col gap-1">
+                                <div className="flex items-center gap-1.5">
+                                  <Flame className={`size-3.5 ${p.fit_score >= 80 ? 'text-orange-500 animate-pulse' : p.fit_score >= 50 ? 'text-blue-400' : 'text-white/20'}`} />
+                                  <span className={`text-[12px] font-bold uppercase tracking-wider ${p.fit_score >= 80 ? 'text-white' : 'text-white/40'}`}>
+                                    Potentiel : {p.fit_score >= 80 ? 'Fort' : p.fit_score >= 50 ? 'Moyen' : 'Faible'}
+                                  </span>
+                                </div>
+                                <div className="w-20 h-1 bg-white/5 rounded-full overflow-hidden border border-white/5">
+                                  <div 
+                                    className={`h-full rounded-full transition-all duration-1000 ${p.fit_score >= 80 ? 'bg-gradient-to-r from-orange-600 to-orange-400 shadow-[0_0_12px_rgba(249,115,22,0.4)]' : p.fit_score >= 50 ? 'bg-blue-500' : 'bg-white/20'}`} 
+                                    style={{ width: `${p.fit_score || 0}%` }}
+                                  />
+                                </div>
+                              </div>
+                            </td>
+                            <td className="px-6 py-5">
+                              <div className="flex items-center gap-3">
+                                <div className="p-2 rounded-xl bg-white/[0.03] border border-[#1F1F1F] text-white/30 group-hover:text-blue-400 group-hover:border-blue-500/30 transition-all">
+                                  <MailSearch className="size-4" />
+                                </div>
+                                <span className="text-[12px] text-white/50 font-medium lowercase truncate max-w-[150px]">
+                                  {p.email || (p.decision_maker ? `${p.decision_maker.toLowerCase().replace(/\s+/g, '.')}@${p.company_name?.toLowerCase().replace(/\s+/g, '') || 'company'}.com` : 'enrichir...')}
+                                </span>
+                              </div>
+                            </td>
+                            <td className="px-6 py-5 text-right">
+                              <div className="flex items-center justify-end gap-4" onClick={(e) => e.stopPropagation()}>
+                                <div className="flex items-center bg-black/60 rounded-xl border border-[#1F1F1F] p-1 opacity-0 group-hover:opacity-100 transition-all translate-x-4 group-hover:translate-x-0">
+                                  <button className="p-2 hover:bg-emerald-500/10 text-white/20 hover:text-emerald-500 rounded-lg transition-all" title="Approuver">
+                                    <CheckCircle2 className="size-4" />
+                                  </button>
+                                  <button className="p-2 hover:bg-white/10 text-white/20 hover:text-white rounded-lg transition-all" title="En attente">
+                                    <HelpCircle className="size-4" />
+                                  </button>
+                                  <button className="p-2 hover:bg-red-500/10 text-white/20 hover:text-red-500 rounded-lg transition-all" title="Rejeter">
+                                    <CircleSlash className="size-4" />
+                                  </button>
+                                </div>
+                                <button 
+                                  onClick={(e) => { e.stopPropagation(); setSelectedProspect(p); }}
+                                  className="p-2.5 hover:bg-white/5 rounded-xl text-white/20 hover:text-white transition-all group/btn"
+                                >
+                                  <Plus className="size-5 group-hover/btn:rotate-90 transition-transform duration-300" />
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+                </div>
+
+                {selectedProspect && (
+                  <div className="w-full lg:w-[450px] xl:w-[500px] bg-[#080808] border-l border-[#1F1F1F] overflow-y-auto flex flex-col shrink-0">
+                    <div className="p-6 border-b border-[#1F1F1F] flex items-center justify-between sticky top-0 bg-[#080808]/90 backdrop-blur z-10">
+                      <h3 className="text-xl font-bold">Détails Prospect</h3>
+                      <button onClick={() => setSelectedProspect(null)} className="p-2 hover:bg-white/10 rounded-xl transition-colors">
+                        <X className="size-5 text-white/40" />
+                      </button>
+                    </div>
+                    <div className="p-8 space-y-8">
+                      <div className="flex flex-col items-center text-center gap-4">
+                        <div className="size-24 rounded-2xl bg-white/[0.03] flex items-center justify-center overflow-hidden border border-[#1F1F1F] shrink-0 shadow-2xl">
+                          {selectedProspect.photo_url ? (
+                            <img src={selectedProspect.photo_url} alt={selectedProspect.decision_maker} className="w-full h-full object-cover" />
+                          ) : (
+                            <span className="text-3xl font-bold text-white/20">{selectedProspect.decision_maker?.charAt(0) || "U"}</span>
+                          )}
+                        </div>
+                        <div>
+                          <h2 className="text-2xl font-bold text-white tracking-tight">{selectedProspect.decision_maker || "Inconnu"}</h2>
+                          <p className="text-white/60 font-medium text-lg mt-1">{selectedProspect.role || "Décideur"}</p>
+                          <p className="text-white/30 mt-1">{selectedProspect.company_name}</p>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="p-5 rounded-xl bg-white/[0.03] border border-[#1F1F1F] flex flex-col items-center justify-center text-center">
+                          <p className="text-[10px] text-white/20 uppercase tracking-[0.2em] font-bold mb-1.5">Score ICP</p>
+                          <p className="text-2xl font-bold text-emerald-400">{selectedProspect.fit_score || 0}%</p>
+                        </div>
+                        <div className="p-5 rounded-xl bg-white/[0.03] border border-[#1F1F1F] flex flex-col items-center justify-center text-center">
+                          <p className="text-[10px] text-white/20 uppercase tracking-[0.2em] font-bold mb-1.5">Statut</p>
+                          <p className="text-xs font-bold text-white uppercase tracking-wider mt-1 px-2 py-1 rounded bg-white/5">
+                            {{
+                              discovered: "Découvert",
+                              qualified: "Qualifié",
+                              disqualified: "Non qualifié",
+                              contacted: "Contacté",
+                              replied: "Répondu",
+                              meeting_booked: "Rdv"
+                            }[selectedProspect.status] || selectedProspect.status}
+                          </p>
+                        </div>
+                      </div>
+
+                      {/* Campaign Sequence Section */}
+                      <div className="space-y-4">
+                        <h4 className="text-[10px] font-bold text-white/20 uppercase tracking-[0.2em] flex items-center gap-2 px-1">
+                          <Zap className="size-3" /> Campaign Sequence
+                        </h4>
+                        <div className="p-5 rounded-xl bg-blue-500/5 border border-blue-500/10 space-y-4">
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs text-white/40 uppercase tracking-wider font-medium">Status</span>
+                            <span className="px-2 py-0.5 rounded-md bg-emerald-500/10 text-emerald-400 text-[10px] font-bold uppercase border border-emerald-500/20">Actif</span>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs text-white/40 uppercase tracking-wider font-medium">Étape</span>
+                            <span className="text-sm font-bold text-white">Étape 1 : Identification</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Basic Information Section */}
+                      <div className="space-y-4">
+                        <h4 className="text-[10px] font-bold text-white/20 uppercase tracking-[0.2em] flex items-center gap-2 px-1">
+                          <Info className="size-3" /> Basic Information
+                        </h4>
+                        <div className="p-6 rounded-xl bg-white/[0.03] border border-[#1F1F1F] space-y-6">
+                          <div className="grid grid-cols-2 gap-y-6 gap-x-4">
+                            <div className="space-y-1.5">
+                              <p className="text-[10px] text-white/20 uppercase tracking-widest font-bold">Industry</p>
+                              <div className="flex items-center gap-2 text-[13px] text-white/70">
+                                <Building2 className="size-3.5 text-white/20 shrink-0" />
+                                <span className="truncate">{selectedProspect.company?.industry || "N/A"}</span>
+                              </div>
+                            </div>
+                            <div className="space-y-1.5">
+                              <p className="text-[10px] text-white/20 uppercase tracking-widest font-bold">Size</p>
+                              <div className="flex items-center gap-2 text-[13px] text-white/70">
+                                <Users className="size-3.5 text-white/20 shrink-0" />
+                                <span className="truncate">{selectedProspect.company?.size_range || "N/A"}</span>
+                              </div>
+                            </div>
+                            <div className="space-y-1.5">
+                              <p className="text-[10px] text-white/20 uppercase tracking-widest font-bold">Location</p>
+                              <div className="flex items-center gap-2 text-[13px] text-white/70">
+                                <MapPin className="size-3.5 text-white/20 shrink-0" />
+                                <span className="truncate">{selectedProspect.location || selectedProspect.company?.location || "N/A"}</span>
+                              </div>
+                            </div>
+                            <div className="space-y-1.5">
+                              <p className="text-[10px] text-white/20 uppercase tracking-widest font-bold">Website</p>
+                              <div className="flex items-center gap-2 text-[13px] text-white/70 overflow-hidden">
+                                <Globe className="size-3.5 text-white/20 shrink-0" />
+                                {selectedProspect.website ? (
+                                  <a href={selectedProspect.website.startsWith('http') ? selectedProspect.website : `https://${selectedProspect.website}`} target="_blank" rel="noreferrer" className="text-blue-400 hover:text-blue-300 transition-colors truncate">{selectedProspect.website.replace(/^https?:\/\//, '')}</a>
+                                ) : "N/A"}
+                              </div>
+                            </div>
+                          </div>
+                          
+                          <div className="pt-5 border-t border-white/5 space-y-2 overflow-hidden">
+                            <p className="text-[10px] text-white/20 uppercase tracking-widest font-bold">Company LinkedIn</p>
+                            <div className="flex items-center gap-2 text-[13px] text-white/70">
+                              <Link className="size-3.5 text-white/20 shrink-0" />
+                              {selectedProspect.company?.linkedin_url || selectedProspect.linkedin_url ? (
+                                <a href={selectedProspect.company?.linkedin_url || selectedProspect.linkedin_url || '#'} target="_blank" rel="noreferrer" className="text-blue-400 hover:text-blue-300 transition-colors truncate flex items-center gap-1.5">
+                                  Lien profil <ExternalLink className="size-3" />
+                                </a>
+                              ) : "N/A"}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Company Description Section */}
+                      <div className="space-y-4">
+                        <h4 className="text-[10px] font-bold text-white/20 uppercase tracking-[0.2em] px-1">Description</h4>
+                        <div className="p-6 rounded-xl bg-white/[0.03] border border-[#1F1F1F]">
+                          <p className="text-[13px] text-white/50 leading-relaxed italic">
+                            {selectedProspect.company?.description ? `"${selectedProspect.company.description}"` : "Aucune description disponible."}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </motion.div>
+          </div>
+        )}
+
         {isFlowModalOpen && (
           <SequenceBuilderModal 
             onClose={() => setIsFlowModalOpen(false)} 
@@ -1013,6 +1501,43 @@ export function CampaignDashboardView({
           />
         )}
         {isCsvModalOpen && <CsvImportModal onClose={() => setIsCsvModalOpen(false)} campaignId={campaign.id} />}
+      </AnimatePresence>
+
+      {/* FLOATING ACTION BAR */}
+      <AnimatePresence>
+        {selectedIds.length > 0 && (
+          <motion.div 
+            initial={{ y: 20, opacity: 0 }} 
+            animate={{ y: 0, opacity: 1 }} 
+            exit={{ y: 20, opacity: 0 }}
+            className="fixed bottom-8 left-1/2 -translate-x-1/2 z-[200] bg-[#0A0A0A] border border-white/10 rounded-2xl p-4 shadow-[0_30px_100px_rgba(0,0,0,0.8)] flex items-center gap-6 min-w-[400px]"
+          >
+            <div className="flex items-center gap-3 pr-6 border-r border-white/10">
+              <div className="size-8 rounded-lg bg-blue-500 flex items-center justify-center font-bold text-sm">
+                {selectedIds.length}
+              </div>
+              <span className="text-sm font-medium text-white/60">contacts sélectionnés</span>
+            </div>
+            <div className="flex items-center gap-3">
+              <Button 
+                onClick={() => handleDelete(selectedIds)} 
+                disabled={isDeleting}
+                variant="destructive" 
+                className="bg-red-500/10 hover:bg-red-500 text-red-500 hover:text-white border border-red-500/20 gap-2 h-10 px-4"
+              >
+                {isDeleting ? <Loader2 className="size-4 animate-spin" /> : <Trash2 className="size-4" />}
+                Supprimer la sélection
+              </Button>
+              <Button 
+                variant="ghost" 
+                onClick={() => setSelectedIds([])}
+                className="text-white/40 hover:text-white h-10 px-4"
+              >
+                Annuler
+              </Button>
+            </div>
+          </motion.div>
+        )}
       </AnimatePresence>
     </div>
   );
