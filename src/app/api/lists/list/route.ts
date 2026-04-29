@@ -12,30 +12,20 @@ export async function GET(request: Request) {
 
     const supabase = createSupabaseServiceClient();
 
-    // On récupère les campagnes via les flows du client
-    const { data: campaigns, error } = await supabase
-      .from('campaigns')
-      .select(`
-        id, 
-        display_name, 
-        description,
-        config,
-        status, 
-        flow_id,
-        client_flows!inner(client_id)
-      `)
-      .eq('client_flows.client_id', clientId)
-      .eq('status', 'active')
+    const { data: lists, error } = await supabase
+      .from('contact_lists')
+      .select('*')
+      .eq('client_id', clientId)
       .order('created_at', { ascending: false });
 
     if (error) {
-      console.error('[API] Fetch Campaigns Error:', error);
+      console.error('[API] Fetch Lists Error:', error);
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
-    return NextResponse.json({ success: true, campaigns });
+    return NextResponse.json({ success: true, lists });
   } catch (error: any) {
-    console.error('[API] Fetch Campaigns Critical Error:', error);
+    console.error('[API] Fetch Lists Critical Error:', error);
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }

@@ -374,3 +374,100 @@ export async function deleteProspects(ids: string[]): Promise<{ success: boolean
   revalidatePath("/flows/prospecting");
   return { success: true };
 }
+
+// ---------------------------------------------------------------------------
+// GET: All prospects for the current organization (client)
+// ---------------------------------------------------------------------------
+export async function getOrganizationProspects(): Promise<{ data: any[] | null; error: string | null }> {
+  const user = await getUserWithProfile();
+  if (!user || !user.profile?.client_id) return { data: null, error: "Non authentifié" };
+
+  const supabase = await createSupabaseServerClient();
+
+  const { data, error } = await supabase
+    .from("prospects")
+    .select(`
+      id, 
+      company_name, 
+      decision_maker, 
+      role, 
+      fit_score, 
+      status, 
+      priority, 
+      photo_url,
+      website,
+      location,
+      linkedin_url,
+      extra_data,
+      company:companies (
+        industry,
+        size_range,
+        description,
+        linkedin_url,
+        location
+      )
+    `)
+    .eq("client_id", user.profile.client_id)
+    .order("created_at", { ascending: false });
+
+  if (error) return { data: null, error: "Erreur lors du chargement des prospects de l'organisation" };
+  return { data, error: null };
+}
+
+// ---------------------------------------------------------------------------
+// GET: All contact lists for the current organization
+// ---------------------------------------------------------------------------
+export async function getContactLists(): Promise<{ data: any[] | null; error: string | null }> {
+  const user = await getUserWithProfile();
+  if (!user || !user.profile?.client_id) return { data: null, error: "Non authentifié" };
+
+  const supabase = await createSupabaseServerClient();
+
+  const { data, error } = await supabase
+    .from("contact_lists")
+    .select("*")
+    .eq("client_id", user.profile.client_id)
+    .order("created_at", { ascending: false });
+
+  if (error) return { data: null, error: "Erreur lors du chargement des listes" };
+  return { data, error: null };
+}
+
+// ---------------------------------------------------------------------------
+// GET: Prospects for a specific contact list
+// ---------------------------------------------------------------------------
+export async function getProspectsByList(listId: string): Promise<{ data: any[] | null; error: string | null }> {
+  const supabase = await createSupabaseServerClient();
+
+  const { data, error } = await supabase
+    .from("prospect_list_members")
+    .select(`
+      prospect:prospects (
+        id, 
+        company_name, 
+        decision_maker, 
+        role, 
+        fit_score, 
+        status, 
+        priority, 
+        photo_url,
+        website,
+        location,
+        linkedin_url,
+        extra_data,
+        company:companies (
+          industry,
+          size_range,
+          description,
+          linkedin_url,
+          location
+        )
+      )
+    `)
+    .eq("list_id", listId);
+
+  if (error) return { data: null, error: "Erreur lors du chargement des prospects de la liste" };
+  
+  const flattened = (data || []).map((item: any) => item.prospect).filter(Boolean);
+  return { data: flattened, error: null };
+}

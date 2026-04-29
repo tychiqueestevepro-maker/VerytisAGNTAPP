@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Play,
@@ -35,15 +35,25 @@ import {
   MapPin,
   ExternalLink,
   Link,
-  Flame,
-  MailSearch,
+  Mail,
   ChevronRight,
   CircleSlash,
   HelpCircle,
-  Plus
+  Plus,
+  FolderOpen,
+  ArrowRight,
+  Download,
+  UserPlus,
+  Send
 } from "lucide-react";
+import { 
+  getOrganizationProspects,
+  getContactLists,
+  getProspectsByList,
+} from "@/lib/flows/actions";
 import { Button } from "@/components/ui/button";
 import { SequenceBuilderModal } from "./sequence-builder";
+import { cn } from "@/lib/utils";
 
 // --- Types ---
 type CampaignStatus = "active" | "paused" | "archived" | "draft";
@@ -70,6 +80,7 @@ interface Prospect {
   location?: string | null;
   linkedin_url?: string | null;
   email?: string | null;
+  created_at?: string;
   extra_data?: any;
   company?: {
     industry?: string | null;
@@ -87,6 +98,26 @@ interface ActivityLog {
   created_at: string;
   type?: string;
 }
+
+// --- Icons ---
+const LinkedinIcon = (props: any) => (
+  <svg
+    {...props}
+    xmlns="http://www.w3.org/2000/svg"
+    width="24"
+    height="24"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+  >
+    <path d="M16 8a6 6 0 0 1 6 6v7h-4v-7a2 2 0 0 0-2-2 2 2 0 0 0-2 2v7h-4v-7a6 6 0 0 1 6-6z" />
+    <rect width="4" height="12" x="2" y="9" />
+    <circle cx="4" cy="4" r="2" />
+  </svg>
+);
 
 // --- Helpers ---
 const STATUS_LABEL: Record<string, string> = {
@@ -692,9 +723,10 @@ function SettingsModal({ onClose, campaignName, campaign }: { onClose: () => voi
 // ============================================================================
 // MAIN DASHBOARD COMPONENT
 // ============================================================================
+
 export function CampaignDashboardView({ 
   campaign, 
-  prospects, 
+  prospects: initialProspects, 
   activities,
   sequenceSteps
 }: { 
@@ -704,18 +736,112 @@ export function CampaignDashboardView({
   sequenceSteps?: any[];
 }) {
   const router = useRouter();
-  const [isFlowModalOpen, setIsFlowModalOpen] = useState(false);
-  const [isProspectsModalOpen, setIsProspectsModalOpen] = useState(false);
+  const searchParams = useSearchParams();
+  const currentView = searchParams.get('view');
+
+  const isFlowModalOpen = currentView === 'flow';
+  const isProspectsModalOpen = currentView === 'contacts';
+  const isSettingsOpen = currentView === 'settings';
+
   const [selectedProspect, setSelectedProspect] = useState<Prospect | null>(null);
-  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isCsvModalOpen, setIsCsvModalOpen] = useState(false);
+  const [activeProspectTab, setActiveProspectTab] = useState<"campaign" | "lists" | "all">("campaign");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [filterStep, setFilterStep] = useState<string>("all");
+  const [filterPertinence, setFilterPertinence] = useState<string>("all");
+  const [filterEmail, setFilterEmail] = useState<string>("all");
+  const [isFilterOpen, setIsFilterOpen] = useState(false);
+  const [sortBy, setSortBy] = useState<string>("created_at");
+  const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc");
+  const [contactLists, setContactLists] = useState<any[]>([]);
+  const [selectedListId, setSelectedListId] = useState<string | null>(null);
+  const [displayProspects, setDisplayProspects] = useState<any[]>(initialProspects);
+  const [isLoadingProspects, setIsLoadingProspects] = useState(false);
+
+  // Re-sync displayProspects when initialProspects changes
+  useEffect(() => {
+    const filtered = initialProspects.filter(p => {
+      const matchesSearch = !searchQuery || 
+        p.decision_maker?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        p.company_name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        p.email?.toLowerCase().includes(searchQuery.toLowerCase());
+      
+      const matchesStep = filterStep === "all" || getStepLabel(p.status) === filterStep;
+      
+      const pPertinence = (p.fit_score || 0) >= 80 ? '3/3' : (p.fit_score || 0) >= 50 ? '2/3' : '1/3';
+      const matchesPertinence = filterPertinence === "all" || pPertinence === filterPertinence;
+      
+      const matchesEmail = filterEmail === "all" || (filterEmail === "has" ? !!p.email : !p.email);
+
+      return matchesSearch && matchesStep && matchesPertinence && matchesEmail;
+    });
+
+    const sorted = [...filtered].sort((a, b) => {
+      let valA: any = a[sortBy as keyof Prospect];
+      let valB: any = b[sortBy as keyof Prospect];
+
+      if (sortBy === 'step') {
+        const stepOrder: Record<string, number> = { 'Step 1': 1, 'Step 2': 2, 'Step 3': 3, 'End': 4 };
+        valA = stepOrder[getStepLabel(a.status)] || 0;
+        valB = stepOrder[getStepLabel(b.status)] || 0;
+      } else if (sortBy === 'fit_score') {
+        valA = a.fit_score || 0;
+        valB = b.fit_score || 0;
+      } else if (sortBy === 'created_at') {
+        valA = new Date(a.created_at || 0).getTime();
+        valB = new Date(b.created_at || 0).getTime();
+      }
+
+      if (valA < valB) return sortOrder === 'asc' ? -1 : 1;
+      if (valA > valB) return sortOrder === 'asc' ? 1 : -1;
+      return 0;
+    });
+
+    setDisplayProspects(sorted);
+  }, [initialProspects, activeProspectTab, searchQuery, filterStep, filterPertinence, filterEmail, sortBy, sortOrder]);
+
+  // Fetch data based on active tab
+  useEffect(() => {
+    if (!isProspectsModalOpen) return;
+
+    const fetchData = async () => {
+      setIsLoadingProspects(true);
+      try {
+        if (activeProspectTab === "all") {
+          const { data, error } = await getOrganizationProspects();
+          if (!error && data) setDisplayProspects(data);
+        } else if (activeProspectTab === "lists") {
+          const { data, error } = await getContactLists();
+          if (!error && data) {
+            setContactLists(data);
+            if (data.length > 0 && !selectedListId) {
+              setSelectedListId(data[0].id);
+            }
+          }
+          if (selectedListId) {
+            const { data: listProspects, error: listError } = await getProspectsByList(selectedListId);
+            if (!listError && listProspects) setDisplayProspects(listProspects);
+          } else {
+            setDisplayProspects([]);
+          }
+        } else {
+          setDisplayProspects(initialProspects);
+        }
+      } catch (err) {
+        console.error("Error fetching data:", err);
+      } finally {
+        setIsLoadingProspects(false);
+      }
+    };
+
+    fetchData();
+  }, [activeProspectTab, isProspectsModalOpen, selectedListId, initialProspects]);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [isDeleting, setIsDeleting] = useState(false);
   const [campaignName, setCampaignName] = useState(campaign.display_name || "Campagne Sans Nom");
   const [isEditingName, setIsEditingName] = useState(false);
   const nameInputRef = useRef<HTMLInputElement>(null);
   
-  const [isFilterOpen, setIsFilterOpen] = useState(false);
   const [filterScore, setFilterScore] = useState(0);
   const [filterStatus, setFilterStatus] = useState<string>("all");
 
@@ -726,6 +852,42 @@ export function CampaignDashboardView({
   }, [isEditingName]);
 
   const [isStatusLoading, setIsStatusLoading] = useState(false);
+  const [isAddLeadsOpen, setIsAddLeadsOpen] = useState(false);
+  const [isLinkedInModalOpen, setIsLinkedInModalOpen] = useState(false);
+
+  // URL View Synchronization
+  const updateUrlView = (view: string | null) => {
+    const params = new URLSearchParams(searchParams.toString());
+    if (view) {
+      params.set('view', view);
+    } else {
+      params.delete('view');
+    }
+    router.push(`?${params.toString()}`, { scroll: false });
+  };
+
+  const toggleFlowModal = (open: boolean) => {
+    updateUrlView(open ? 'flow' : null);
+  };
+
+  const toggleProspectsModal = (open: boolean) => {
+    updateUrlView(open ? 'contacts' : null);
+  };
+
+  const toggleSettingsModal = (open: boolean) => {
+    updateUrlView(open ? 'settings' : null);
+  };
+
+  const getStepLabel = (status: string) => {
+    switch (status) {
+      case 'discovered':
+      case 'qualified': return 'Step 1';
+      case 'contacted': return 'Step 2';
+      case 'replied': return 'Step 3';
+      case 'converted': return 'End';
+      default: return 'Step 1';
+    }
+  };
 
   const toggleStatus = async () => {
     setIsStatusLoading(true);
@@ -756,10 +918,11 @@ export function CampaignDashboardView({
   };
 
   const toggleSelectAll = () => {
-    if (selectedIds.length === prospects.length) {
+    const currentList = isProspectsModalOpen ? displayProspects : initialProspects;
+    if (selectedIds.length === currentList.length) {
       setSelectedIds([]);
     } else {
-      setSelectedIds(prospects.map(p => p.id));
+      setSelectedIds(currentList.map((p: Prospect) => p.id));
     }
   };
 
@@ -773,39 +936,41 @@ export function CampaignDashboardView({
     <div className="flex flex-col min-h-[calc(100vh-64px)] w-full bg-black text-white font-sans overflow-y-auto">
       
       {/* HEADER */}
-      <header className="shrink-0 border-b border-white/10 px-8 py-5 flex items-center justify-between bg-[#050505] sticky top-0 z-30">
-        <div className="flex items-center gap-6">
-          <Button variant="ghost" size="sm" className="text-white/40 hover:text-white px-0 hover:bg-transparent" onClick={() => router.push("/flows/prospecting")}>
-            <ArrowLeft className="size-4 mr-2" /> Retour aux campagnes
-          </Button>
-          <div className="h-6 w-px bg-white/10" />
-          <div className="flex items-center gap-3 group">
-            {isEditingName ? (
-              <input ref={nameInputRef} value={campaignName} onChange={(e) => setCampaignName(e.target.value)} onBlur={() => setIsEditingName(false)} onKeyDown={(e) => e.key === 'Enter' && setIsEditingName(false)} className="bg-white/5 border border-white/20 rounded-md px-3 py-1 text-lg font-semibold text-white focus:outline-none focus:border-white/40 w-64" />
-            ) : (
-              <h1 className="text-2xl font-bold flex items-center gap-2 cursor-pointer group-hover:text-white/90 transition-colors" onClick={() => setIsEditingName(true)}>
-                {campaignName}
-                <Edit2 className="size-4 text-white/0 group-hover:text-white/40 transition-colors" />
-              </h1>
-            )}
-            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-white/5 border border-white/10 ml-2">
-              <StatusDot status={campaign.status} />
-              <span className="text-xs text-white/60 capitalize">{STATUS_LABEL[campaign.status] || campaign.status}</span>
+      {!isProspectsModalOpen && (
+        <header className="shrink-0 border-b border-white/10 px-8 py-5 flex items-center justify-between bg-[#050505] sticky top-0 z-20">
+          <div className="flex items-center gap-6">
+            <Button variant="ghost" size="sm" className="text-white/40 hover:text-white px-0 hover:bg-transparent" onClick={() => router.push("/flows/prospecting")}>
+              <ArrowLeft className="size-4 mr-2" /> Retour aux campagnes
+            </Button>
+            <div className="h-6 w-px bg-white/10" />
+            <div className="flex items-center gap-3 group">
+              {isEditingName ? (
+                <input ref={nameInputRef} value={campaignName} onChange={(e) => setCampaignName(e.target.value)} onBlur={() => setIsEditingName(false)} onKeyDown={(e) => e.key === 'Enter' && setIsEditingName(false)} className="bg-white/5 border border-white/20 rounded-md px-3 py-1 text-lg font-semibold text-white focus:outline-none focus:border-white/40 w-64" />
+              ) : (
+                <h1 className="text-2xl font-bold flex items-center gap-2 cursor-pointer group-hover:text-white/90 transition-colors" onClick={() => setIsEditingName(true)}>
+                  {campaignName}
+                  <Edit2 className="size-4 text-white/0 group-hover:text-white/40 transition-colors" />
+                </h1>
+              )}
+              <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-white/5 border border-white/10 ml-2">
+                <StatusDot status={campaign.status} />
+                <span className="text-xs text-white/60 capitalize">{STATUS_LABEL[campaign.status] || campaign.status}</span>
+              </div>
             </div>
           </div>
-        </div>
 
-        <div className="flex items-center gap-4">
-          <Button onClick={toggleStatus} disabled={isStatusLoading} className={`gap-2 font-medium border min-w-[140px] ${isPaused ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20 hover:bg-emerald-500/20" : "bg-amber-500/10 text-amber-400 border-amber-500/20 hover:bg-amber-500/20"}`}>
-            {isStatusLoading ? <Loader2 className="size-4 animate-spin" /> : isPaused ? <Play className="size-4" /> : <Pause className="size-4" />}
-            {isPaused ? "Activer" : "Mettre en pause"}
-          </Button>
-          <div className="h-6 w-px bg-white/10" />
-          <Button onClick={() => setIsSettingsOpen(true)} className="bg-white/10 hover:bg-white/20 text-white gap-2 border border-white/10 font-medium">
-            <Settings className="size-4" /> Paramètres
-          </Button>
-        </div>
-      </header>
+          <div className="flex items-center gap-4">
+            <Button onClick={toggleStatus} disabled={isStatusLoading} className={`gap-2 font-medium border min-w-[140px] ${isPaused ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20 hover:bg-emerald-500/20" : "bg-amber-500/10 text-amber-400 border-amber-500/20 hover:bg-amber-500/20"}`}>
+              {isStatusLoading ? <Loader2 className="size-4 animate-spin" /> : isPaused ? <Play className="size-4" /> : <Pause className="size-4" />}
+              {isPaused ? "Activer" : "Mettre en pause"}
+            </Button>
+            <div className="h-6 w-px bg-white/10" />
+            <Button onClick={() => toggleSettingsModal(true)} className="bg-white/10 hover:bg-white/20 text-white gap-2 border border-white/10 font-medium">
+              <Settings className="size-4" /> Paramètres
+            </Button>
+          </div>
+        </header>
+      )}
 
       {/* DASHBOARD CONTENT */}
       <div className="p-8 w-full space-y-8">
@@ -825,18 +990,18 @@ export function CampaignDashboardView({
             <div className="grid grid-cols-3 gap-3 mb-6">
               <div className="p-3 rounded-xl bg-white/[0.02] border border-white/5 flex flex-col justify-center">
                 <p className="text-[9px] text-white/30 uppercase tracking-widest mb-1 font-bold">Prospects</p>
-                <p className="text-xl font-bold text-white">{prospects.length}</p>
+                <p className="text-xl font-bold text-white">{initialProspects.length}</p>
               </div>
               <div className="p-3 rounded-xl bg-white/[0.02] border border-white/5 flex flex-col justify-center">
                 <p className="text-[9px] text-white/30 uppercase tracking-widest mb-1 font-bold">Contactés</p>
                 <p className="text-xl font-bold text-amber-400">
-                  {prospects.filter(p => ['contacted', 'replied', 'converted'].includes(p.status)).length}
+                  {initialProspects.filter((p: Prospect) => ['contacted', 'replied', 'converted'].includes(p.status)).length}
                 </p>
               </div>
               <div className="p-3 rounded-xl bg-white/[0.02] border border-white/5 flex flex-col justify-center">
                 <p className="text-[9px] text-white/30 uppercase tracking-widest mb-1 font-bold">Réponses</p>
                 <p className="text-xl font-bold text-emerald-400">
-                  {prospects.filter(p => ['replied', 'converted'].includes(p.status)).length}
+                  {initialProspects.filter((p: Prospect) => ['replied', 'converted'].includes(p.status)).length}
                 </p>
               </div>
             </div>
@@ -845,17 +1010,17 @@ export function CampaignDashboardView({
               <div className="space-y-2">
                 <div className="flex justify-between items-end">
                   <span className="text-xs font-medium text-white/60">Identification</span>
-                  <span className="text-xs font-bold text-white">{prospects.length}</span>
+                  <span className="text-xs font-bold text-white">{initialProspects.length}</span>
                 </div>
                 <div className="h-2 bg-white/5 rounded-full overflow-hidden">
-                  <motion.div initial={{ width: 0 }} animate={{ width: prospects.length > 0 ? "100%" : "0%" }} className="h-full bg-blue-500/50 rounded-full" />
+                  <motion.div initial={{ width: 0 }} animate={{ width: initialProspects.length > 0 ? "100%" : "0%" }} className="h-full bg-blue-500/50 rounded-full" />
                 </div>
               </div>
 
               <div className="space-y-2">
                 {(() => {
-                  const contacted = prospects.filter(p => ['contacted', 'replied', 'converted'].includes(p.status)).length;
-                  const percent = prospects.length > 0 ? (contacted / prospects.length) * 100 : 0;
+                  const contacted = initialProspects.filter((p: Prospect) => ['contacted', 'replied', 'converted'].includes(p.status)).length;
+                  const percent = initialProspects.length > 0 ? (contacted / initialProspects.length) * 100 : 0;
                   return (
                     <>
                       <div className="flex justify-between items-end">
@@ -872,8 +1037,8 @@ export function CampaignDashboardView({
 
               <div className="space-y-2">
                 {(() => {
-                  const replied = prospects.filter(p => ['replied', 'converted'].includes(p.status)).length;
-                  const percent = prospects.length > 0 ? (replied / prospects.length) * 100 : 0;
+                  const replied = initialProspects.filter((p: Prospect) => ['replied', 'converted'].includes(p.status)).length;
+                  const percent = initialProspects.length > 0 ? (replied / initialProspects.length) * 100 : 0;
                   return (
                     <>
                       <div className="flex justify-between items-end">
@@ -890,7 +1055,7 @@ export function CampaignDashboardView({
             </div>
           </div>
 
-          <div onClick={() => setIsFlowModalOpen(true)} className="p-5 rounded-2xl border border-white/10 bg-[#0c0c0c] hover:bg-[#111] transition-all flex flex-col relative overflow-hidden group cursor-pointer">
+          <div onClick={() => toggleFlowModal(true)} className="p-5 rounded-2xl border border-white/10 bg-[#0c0c0c] hover:bg-[#111] transition-all flex flex-col relative overflow-hidden group cursor-pointer">
             <div className="relative z-10 flex flex-col h-full">
               <div className="flex items-center justify-between mb-4">
                 <div className="flex items-center gap-3">
@@ -930,7 +1095,7 @@ export function CampaignDashboardView({
                   <User className="size-5 text-white/40" /> Contacts de la campagne
                 </h2>
                 <button 
-                  onClick={() => setIsProspectsModalOpen(true)}
+                  onClick={() => toggleProspectsModal(true)}
                   className="p-2 hover:bg-white/5 rounded-lg transition-colors group/zoom 2xl:ml-2"
                   title="Agrandir la liste"
                 >
@@ -938,19 +1103,6 @@ export function CampaignDashboardView({
                 </button>
               </div>
               <div className="flex flex-wrap items-center gap-3">
-                <div className="relative">
-                  <Search className="size-4 text-white/40 absolute left-3 top-1/2 -translate-y-1/2" />
-                  <input placeholder="Rechercher..." className="pl-9 pr-4 py-2 bg-white/5 border border-white/10 rounded-lg text-sm focus:outline-none focus:border-white/30 text-white w-64 transition-colors" />
-                </div>
-                <Button onClick={() => setIsCsvModalOpen(true)} variant="outline" className="border-white/10 bg-transparent hover:bg-white/5 text-white h-10 px-4 transition-colors">
-                  <Upload className="size-4 mr-2" /> Importer CSV
-                </Button>
-                <Button className="bg-white text-black hover:bg-white/90 gap-2 h-10 px-6 font-bold text-sm shadow-xl shadow-white/5 whitespace-nowrap">
-                  <Search className="size-4" /> Rechercher des prospects
-                </Button>
-                <div className="relative">
-                  {/* Filter button removed from here */}
-                </div>
               </div>
             </div>
 
@@ -958,159 +1110,71 @@ export function CampaignDashboardView({
               <table className="w-full text-left text-sm relative">
                 <thead className={`bg-[#080808] border-b border-[#1F1F1F] text-white/20 text-[10px] uppercase tracking-[0.2em] font-bold sticky top-0 ${isProspectsModalOpen ? 'z-10' : 'z-30'}`}>
                   <tr>
-                    <th className="pl-6 py-4 w-10">
-                      <input 
-                        type="checkbox" 
-                        checked={selectedIds.length > 0 && selectedIds.length === prospects.length}
-                        onChange={toggleSelectAll}
-                        className="size-4 rounded border-white/10 bg-white/5 checked:bg-blue-500 transition-colors cursor-pointer"
-                      />
-                    </th>
-                    <th className="px-6 py-4 font-bold">Prospect</th>
-                    <th className="px-6 py-4 font-bold text-center">Score ICP</th>
-                    <th className="px-6 py-4 font-bold text-center">Statut</th>
-                        <th className="px-6 py-4 font-bold text-right relative">
-                          <button 
-                            onClick={() => setIsFilterOpen(!isFilterOpen)} 
-                            className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-lg transition-all border ${isFilterOpen ? "bg-white/10 border-white/20 text-white" : "border-transparent text-white/40 hover:bg-white/[0.03] hover:text-white/60"}`}
-                          >
-                            <Filter className="size-3" />
-                            <span className="text-[10px] uppercase tracking-widest">Filtrer</span>
-                            <ChevronDown className={`size-3 transition-transform ${isFilterOpen ? "rotate-180" : ""}`} />
-                          </button>
-
-                      <AnimatePresence>
-                        {isFilterOpen && (
-                          <motion.div 
-                            initial={{ opacity: 0, y: 8, scale: 0.95 }} 
-                            animate={{ opacity: 1, y: 0, scale: 1 }} 
-                            exit={{ opacity: 0, y: 8, scale: 0.95 }} 
-                            className="absolute right-0 top-full mt-2 w-64 bg-[#0A0A0A]/90 backdrop-blur-xl border border-white/10 rounded-xl shadow-[0_20px_50px_rgba(0,0,0,0.5)] p-5 z-50 text-left normal-case tracking-normal"
-                          >
-                            <div className="space-y-5">
-                              <div>
-                                <label className="text-[10px] text-white/30 uppercase tracking-widest mb-2.5 block font-bold">Statut des prospects</label>
-                                <select 
-                                  value={filterStatus} 
-                                  onChange={(e) => setFilterStatus(e.target.value)} 
-                                  className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-white/30"
-                                >
-                                  <option value="all" className="bg-[#0A0A0A]">Tous les statuts</option>
-                                  <option value="discovered" className="bg-[#0A0A0A]">Découvert</option>
-                                  <option value="qualified" className="bg-[#0A0A0A]">Qualifié</option>
-                                  <option value="contacted" className="bg-[#0A0A0A]">Contacté</option>
-                                  <option value="replied" className="bg-[#0A0A0A]">Répondu</option>
-                                </select>
-                              </div>
-                              <div>
-                                <div className="flex items-center justify-between mb-2.5">
-                                  <label className="text-[10px] text-white/30 uppercase tracking-widest block font-bold">Score ICP Minimum</label>
-                                  <span className="text-xs text-emerald-400 font-bold">{filterScore}%</span>
-                                </div>
-                                <input 
-                                  type="range" 
-                                  min="0" 
-                                  max="100" 
-                                  value={filterScore} 
-                                  onChange={(e) => setFilterScore(Number(e.target.value))} 
-                                  className="w-full accent-emerald-500 h-1 bg-white/10 rounded-full appearance-none cursor-pointer" 
-                                />
-                              </div>
-                              <div className="pt-4 border-t border-white/5 flex justify-end gap-2">
-                                <Button size="sm" variant="ghost" onClick={() => { setFilterStatus('all'); setFilterScore(0); }} className="text-[10px] text-white/40 hover:text-white uppercase tracking-widest font-bold">Réinitialiser</Button>
-                                <Button size="sm" onClick={() => setIsFilterOpen(false)} className="bg-white text-black hover:bg-white/90 text-[10px] uppercase tracking-widest font-bold px-4">Appliquer</Button>
-                              </div>
-                            </div>
-                          </motion.div>
-                        )}
-                      </AnimatePresence>
-                    </th>
+                    <th className="pl-6 py-4 font-bold">Prospect</th>
+                    <th className="px-6 py-4 font-bold text-center w-32">Pertinence</th>
+                    <th className="px-6 py-4 font-bold text-center w-32">Step</th>
+                    <th className="px-6 py-4 font-bold text-right w-16"></th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-white/5">
-                  {prospects.filter(p => (filterStatus === "all" || p.status === filterStatus) && (p.fit_score || 0) >= filterScore).length === 0 ? (
+                  {displayProspects.length === 0 ? (
                     <tr><td colSpan={4} className="px-6 py-8 text-center text-white/40">Aucun contact trouvé.</td></tr>
                   ) : (
-                    prospects.filter(p => (filterStatus === "all" || p.status === filterStatus) && (p.fit_score || 0) >= filterScore).map((p, i) => {
+                    displayProspects.slice(0, 6).map((p: Prospect, i: number) => {
                       const isSelected = selectedIds.includes(p.id);
                       return (
                         <tr key={p.id} className={`hover:bg-white/[0.02] transition-colors group cursor-pointer border-b border-white/5 last:border-0 ${isSelected ? "bg-blue-500/5" : ""}`}>
-                          <td className="pl-6 py-4" onClick={(e) => e.stopPropagation()}>
-                            <input 
-                              type="checkbox" 
-                              checked={isSelected}
-                              onChange={() => toggleSelectOne(p.id)}
-                              className="size-4 rounded border-white/10 bg-white/5 checked:bg-blue-500 transition-colors cursor-pointer"
-                            />
-                          </td>
-                          <td className="px-6 py-4" onClick={() => toggleSelectOne(p.id)}>
+                          <td className="px-6 py-4">
                             <div className="flex items-center gap-4">
                             <ProspectAvatar name={p.decision_maker || p.company_name} photoUrl={p.photo_url} colorIndex={i} />
                             <div>
-                              <p className="font-bold text-[15px] text-white group-hover:text-blue-400 transition-colors">
+                              <p className="font-bold text-[15px] text-white group-hover:text-blue-400 transition-colors flex items-center gap-2">
                                 {p.decision_maker ? (p.decision_maker.split(/[,|•-]/)[0].trim()) : "Inconnu"}
-                              </p>
-                              <p className="text-xs text-white/40 mt-0.5">
-                                <span className="text-white/60 font-medium">
-                                  {p.role || (p.decision_maker?.includes(' at ') ? p.decision_maker.split(' at ')[1] : "Décideur")}
-                                </span>
-                                {p.company_name && (
-                                  <>
-                                    <span className="mx-1.5 opacity-30">@</span>
-                                    <span className="text-white/80">{p.company_name}</span>
-                                  </>
+                                {p.linkedin_url && (
+                                  <a 
+                                    href={p.linkedin_url} 
+                                    target="_blank" 
+                                    rel="noopener noreferrer"
+                                    onClick={(e) => e.stopPropagation()}
+                                    className="text-white/20 hover:text-[#0077b5] transition-all hover:scale-110 active:scale-95"
+                                  >
+                                    <LinkedinIcon className="size-3.5" />
+                                  </a>
                                 )}
+                              </p>
+                              <p className="text-[11px] text-white/40 font-medium">
+                                {p.role || "Décideur"} {p.company_name && `@ ${p.company_name}`}
                               </p>
                             </div>
                           </div>
                         </td>
-                        <td className="px-6 py-4 text-center">
-                          <span className={`px-2.5 py-1 rounded-md text-[10px] font-bold border ${
-                            (p.fit_score || 0) > 80 ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20" :
-                            (p.fit_score || 0) > 50 ? "bg-blue-500/10 text-blue-400 border-blue-500/20" :
-                            "bg-white/5 text-white/40 border-white/10"
-                          }`}>
-                            {p.fit_score || 0}/100
+                        <td className="px-6 py-4 text-center w-32">
+                          <span className={cn(
+                            "px-2.5 py-1 rounded-md text-[10px] font-bold border inline-block w-12",
+                            (p.fit_score || 0) >= 80 ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20" :
+                            (p.fit_score || 0) >= 50 ? "bg-orange-500/10 text-orange-400 border-orange-500/20" :
+                            "bg-red-500/10 text-red-400 border-red-500/20"
+                          )}>
+                            {(p.fit_score || 0) >= 80 ? '3/3' : (p.fit_score || 0) >= 50 ? '2/3' : '1/3'}
                           </span>
                         </td>
-                        <td className="px-6 py-4 text-center">
-                          <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-white/5 border border-white/10">
-                            <div className={`size-1.5 rounded-full ${
-                              p.status === 'replied' ? 'bg-emerald-500' :
-                              p.status === 'contacted' ? 'bg-blue-500' :
-                              'bg-white/20'
-                            }`} />
-                            <span className="text-[10px] font-bold uppercase tracking-wider text-white/60">
-                              {{
-                                discovered: "Découvert",
-                                qualified: "Qualifié",
-                                disqualified: "Non qualifié",
-                                contacted: "Contacté",
-                                replied: "Répondu",
-                                meeting_booked: "Rendez-vous"
-                              }[p.status] || p.status}
-                            </span>
-                          </div>
+                        <td className="px-6 py-4 text-center w-32">
+                          <span className={cn(
+                            "px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider border inline-block w-20",
+                            p.status === 'converted' 
+                              ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
+                              : "bg-blue-500/10 text-blue-400 border-blue-500/20"
+                          )}>
+                            {getStepLabel(p.status)}
+                          </span>
                         </td>
                         <td className="px-6 py-4 text-right">
-                          <div className="flex items-center justify-end gap-2">
-                            <Button 
-                              variant="ghost" 
-                              size="sm" 
-                              onClick={(e) => { e.stopPropagation(); handleDelete([p.id]); }}
-                              className="opacity-0 group-hover:opacity-100 transition-opacity text-white/20 hover:text-red-400 size-8 p-0"
-                            >
-                              <Trash2 className="size-4" />
-                            </Button>
-                            <Button 
-                              variant="outline" 
-                              size="sm" 
-                              className="border-white/10 hover:bg-white/5 opacity-0 group-hover:opacity-100 transition-opacity"
-                              onClick={(e) => { e.stopPropagation(); setSelectedProspect(p); setIsProspectsModalOpen(true); }}
-                            >
-                              Détails
-                            </Button>
-                          </div>
+                          <button 
+                            onClick={(e) => { e.stopPropagation(); setSelectedProspect(p); toggleProspectsModal(true); }}
+                            className="p-2.5 hover:bg-white/5 rounded-xl text-white/20 hover:text-white transition-all group/btn"
+                          >
+                            <Plus className="size-5 group-hover/btn:rotate-90 transition-transform duration-300" />
+                          </button>
                         </td>
                       </tr>
                     );
@@ -1142,9 +1206,10 @@ export function CampaignDashboardView({
                   {activities.map((act) => (
                     <div key={act.id} className="relative flex items-start gap-4">
                       <div className="flex items-center justify-center w-10 h-10 rounded-full border border-white/10 bg-[#0c0c0c] shrink-0 relative z-10 text-white/40 shadow-xl">
-                        {act.type?.includes('hunt') ? <Search className="size-4" /> : 
-                         act.type?.includes('message') || act.type?.includes('outreach') ? <MessageSquare className="size-4" /> : 
-                         act.type?.includes('qa') ? <CheckCircle2 className="size-4" /> :
+                        {act.type?.includes('hunt') || act.type?.includes('hunter') ? <UserPlus className="size-4" /> : 
+                         act.type?.includes('message') || act.type?.includes('outreach') ? <Send className="size-4" /> : 
+                         act.type?.includes('response') ? <MessageSquare className="size-4" /> :
+                         act.type?.includes('qa') || act.type?.includes('validation') ? <CheckCircle2 className="size-4" /> :
                          <Zap className="size-4" />}
                       </div>
                       <div className="flex-1 pt-1.5">
@@ -1157,7 +1222,10 @@ export function CampaignDashboardView({
                           </span>
                         </div>
                         <p className="text-xs text-white/40 leading-relaxed">
-                          L'opération s'est déroulée avec succès.
+                          {act.type?.includes('hunt') ? 'Nouveaux profils ajoutés à votre liste de prospection.' :
+                           act.type?.includes('message') || act.type?.includes('outreach') ? 'Le message a été transmis avec succès via LinkedIn.' :
+                           act.type?.includes('qa') ? 'Les critères de qualité ont été vérifiés par l\'IA.' :
+                           'Action de campagne effectuée avec succès.'}
                         </p>
                       </div>
                     </div>
@@ -1180,24 +1248,81 @@ export function CampaignDashboardView({
               style={{ paddingLeft: 'var(--sidebar-width, 0px)' }}
             >
               {/* TOP HEADER */}
-              <div className="px-8 py-4 border-b border-[#1F1F1F] flex items-center justify-between shrink-0 bg-[#080808]/50 backdrop-blur-xl">
-                <div className="flex items-center gap-8">
+              <div className="px-8 py-4 border-b border-[#1F1F1F] flex items-center justify-between shrink-0 bg-[#080808]/50 backdrop-blur-xl relative z-[100]">
+                <div className="flex items-center gap-6">
                   <div className="flex items-center gap-3">
                     <div className="p-2.5 rounded-xl bg-blue-500/10 text-blue-400 border border-blue-500/20">
                       <User className="size-5" />
                     </div>
                     <div>
-                      <h2 className="text-lg font-bold text-white tracking-tight">Contacts</h2>
-                      <p className="text-[10px] text-white/30 uppercase tracking-widest font-bold">{prospects.length} prospects</p>
+                      <div className="flex items-center gap-2">
+                        <h2 className="text-lg font-bold text-white tracking-tight">Contacts</h2>
+                        <span className="text-white/20 font-light">—</span>
+                        <h3 className="text-sm font-medium text-white/70">{campaignName}</h3>
+                        <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-white/5 border border-white/10 ml-1">
+                          <StatusDot status={campaign.status} />
+                          <span className="text-[9px] text-white/40 uppercase font-bold tracking-wider">{STATUS_LABEL[campaign.status]}</span>
+                        </div>
+                      </div>
+                      <p className="text-[10px] text-white/30 uppercase tracking-widest font-bold">{displayProspects.length} prospects</p>
                     </div>
                   </div>
                   
+                  <div className="h-8 w-px bg-[#1F1F1F]" />
+
                   {/* SUB TABS */}
                   <div className="flex items-center bg-black/40 p-1 rounded-xl border border-[#1F1F1F]">
-                    <button className="px-5 py-1.5 rounded-lg bg-white/[0.06] text-white text-[11px] font-bold uppercase tracking-wider transition-all">Tous</button>
-                    <button className="px-5 py-1.5 rounded-lg text-white/40 text-[11px] font-bold uppercase tracking-wider hover:text-white transition-all">Segments</button>
-                    <button className="px-5 py-1.5 rounded-lg text-white/40 text-[11px] font-bold uppercase tracking-wider hover:text-white transition-all">Listes</button>
+                    <button 
+                      onClick={() => setActiveProspectTab("campaign")}
+                      className={cn(
+                        "px-5 py-1.5 rounded-lg text-[11px] font-bold uppercase tracking-wider transition-all",
+                        activeProspectTab === "campaign" ? "bg-white/[0.06] text-white" : "text-white/40 hover:text-white"
+                      )}
+                    >
+                      Campagne
+                    </button>
+                    <button 
+                      onClick={() => setActiveProspectTab("lists")}
+                      className={cn(
+                        "px-5 py-1.5 rounded-lg text-[11px] font-bold uppercase tracking-wider transition-all",
+                        activeProspectTab === "lists" ? "bg-white/[0.06] text-white" : "text-white/40 hover:text-white"
+                      )}
+                    >
+                      Listes
+                    </button>
+                    <button 
+                      onClick={() => setActiveProspectTab("all")}
+                      className={cn(
+                        "px-5 py-1.5 rounded-lg text-[11px] font-bold uppercase tracking-wider transition-all",
+                        activeProspectTab === "all" ? "bg-white/[0.06] text-white" : "text-white/40 hover:text-white"
+                      )}
+                    >
+                      Tous
+                    </button>
                   </div>
+
+                  {activeProspectTab === "lists" && contactLists.length > 0 && (
+                    <>
+                      <div className="h-8 w-px bg-[#1F1F1F]" />
+                      <div className="flex items-center gap-2 bg-black/40 px-3 py-1.5 rounded-xl border border-[#1F1F1F]">
+                        <FolderOpen className="size-3.5 text-white/30" />
+                        <select 
+                          value={selectedListId || ""} 
+                          onChange={(e) => setSelectedListId(e.target.value)}
+                          className="bg-transparent text-[11px] font-bold text-white/70 uppercase tracking-wider focus:outline-none cursor-pointer"
+                        >
+                          {contactLists.map(list => (
+                            <option key={list.id} value={list.id} className="bg-[#050505]">
+                              {list.name}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    </>
+                  )}
+
+                  <div className="h-8 w-px bg-[#1F1F1F]" />
+
                 </div>
 
                 <div className="flex items-center gap-4">
@@ -1206,18 +1331,185 @@ export function CampaignDashboardView({
                     <input 
                       type="text" 
                       placeholder="Rechercher un prospect..." 
-                      className="bg-black/40 border border-[#1F1F1F] rounded-xl pl-10 pr-4 py-2.5 text-sm text-white focus:outline-none focus:border-blue-500/50 focus:ring-1 focus:ring-blue-500/20 w-[280px] transition-all"
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      className="bg-black/40 border border-[#1F1F1F] rounded-xl pl-10 pr-4 py-2.5 text-sm text-white focus:outline-none focus:border-blue-500/50 focus:ring-1 focus:ring-blue-500/20 w-[240px] transition-all"
                     />
                   </div>
-                  <Button variant="outline" className="border-[#1F1F1F] bg-black/40 text-white/60 hover:text-white gap-2 h-10 rounded-xl px-4 text-xs font-bold uppercase tracking-wider">
-                    <Filter className="size-3.5" /> Filtres
+                  <div className="relative">
+                    <Button 
+                      onClick={() => setIsFilterOpen(!isFilterOpen)}
+                      variant="outline" 
+                      className={cn(
+                        "border-[#1F1F1F] bg-black/40 text-white/60 hover:text-white gap-2 h-10 rounded-xl px-4 text-xs font-bold uppercase tracking-wider",
+                        (filterStep !== "all" || filterPertinence !== "all" || filterEmail !== "all") && "text-blue-400 border-blue-500/30 bg-blue-500/5"
+                      )}
+                    >
+                      <Filter className="size-3.5" /> Filtres
+                    </Button>
+
+                    <AnimatePresence>
+                      {isFilterOpen && (
+                        <motion.div 
+                          initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                          animate={{ opacity: 1, y: 0, scale: 1 }}
+                          exit={{ opacity: 0, y: 10, scale: 0.95 }}
+                          className="absolute right-0 top-full mt-2 w-72 bg-[#0A0A0A] border border-white/10 rounded-2xl shadow-[0_20px_50px_rgba(0,0,0,0.8)] z-[999] p-6 space-y-6"
+                        >
+                          <div className="flex items-center justify-between">
+                            <h4 className="text-[10px] font-bold text-white/30 uppercase tracking-[0.2em]">Filtres Avancés</h4>
+                            <button 
+                              onClick={() => {
+                                setFilterStep("all");
+                                setFilterPertinence("all");
+                                setFilterEmail("all");
+                                setSortBy("created_at");
+                                setSortOrder("desc");
+                              }}
+                              className="text-[10px] font-bold text-blue-400 hover:text-blue-300 uppercase tracking-wider"
+                            >
+                              Réinitialiser
+                            </button>
+                          </div>
+
+                          <div className="space-y-4">
+                            <div className="grid grid-cols-2 gap-4">
+                              <div className="space-y-2">
+                                <label className="text-[10px] text-white/20 uppercase tracking-widest font-bold">Trier par</label>
+                                <select 
+                                  value={sortBy}
+                                  onChange={(e) => setSortBy(e.target.value)}
+                                  className="w-full bg-white/[0.03] border border-white/10 rounded-lg px-3 py-2 text-[11px] text-white focus:outline-none focus:border-blue-500/50"
+                                >
+                                  <option value="created_at">Date d'import</option>
+                                  <option value="fit_score">Pertinence</option>
+                                  <option value="step">Step</option>
+                                </select>
+                              </div>
+                              <div className="space-y-2">
+                                <label className="text-[10px] text-white/20 uppercase tracking-widest font-bold">Ordre</label>
+                                <select 
+                                  value={sortOrder}
+                                  onChange={(e) => setSortOrder(e.target.value as "asc" | "desc")}
+                                  className="w-full bg-white/[0.03] border border-white/10 rounded-lg px-3 py-2 text-[11px] text-white focus:outline-none focus:border-blue-500/50"
+                                >
+                                  <option value="desc">Décroissant</option>
+                                  <option value="asc">Croissant</option>
+                                </select>
+                              </div>
+                            </div>
+
+                            <div className="h-px bg-white/5 my-2" />
+
+                            <div className="space-y-2">
+                              <label className="text-[10px] text-white/20 uppercase tracking-widest font-bold">Step</label>
+                              <select 
+                                value={filterStep}
+                                onChange={(e) => setFilterStep(e.target.value)}
+                                className="w-full bg-white/[0.03] border border-white/10 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-blue-500/50"
+                              >
+                                <option value="all">Tous les steps</option>
+                                <option value="Step 1">Step 1</option>
+                                <option value="Step 2">Step 2</option>
+                                <option value="Step 3">Step 3</option>
+                                <option value="End">End</option>
+                              </select>
+                            </div>
+
+                            <div className="space-y-2">
+                              <label className="text-[10px] text-white/20 uppercase tracking-widest font-bold">Pertinence</label>
+                              <select 
+                                value={filterPertinence}
+                                onChange={(e) => setFilterPertinence(e.target.value)}
+                                className="w-full bg-white/[0.03] border border-white/10 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-blue-500/50"
+                              >
+                                <option value="all">Toutes les pertinence</option>
+                                <option value="3/3">Élevée (3/3)</option>
+                                <option value="2/3">Moyenne (2/3)</option>
+                                <option value="1/3">Faible (1/3)</option>
+                              </select>
+                            </div>
+
+                            <div className="space-y-2">
+                              <label className="text-[10px] text-white/20 uppercase tracking-widest font-bold">Email</label>
+                              <select 
+                                value={filterEmail}
+                                onChange={(e) => setFilterEmail(e.target.value)}
+                                className="w-full bg-white/[0.03] border border-white/10 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-blue-500/50"
+                              >
+                                <option value="all">Tous</option>
+                                <option value="has">Avec Email</option>
+                                <option value="no">Sans Email</option>
+                              </select>
+                            </div>
+                          </div>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                  </div>
+                  <Button 
+                    variant="outline" 
+                    className="border-[#1F1F1F] bg-black/40 text-white/60 hover:text-white gap-2 h-10 rounded-xl px-4 text-xs font-bold uppercase tracking-wider"
+                    onClick={() => {
+                      // Logic depends on activeProspectTab
+                      console.log("Exporting", activeProspectTab);
+                    }}
+                  >
+                    <Download className="size-3.5" /> Exporter
                   </Button>
                   <div className="w-[1px] h-6 bg-[#1F1F1F] mx-1" />
-                  <Button className="bg-blue-600 hover:bg-blue-500 text-white gap-2 h-10 rounded-xl px-4 text-xs font-bold uppercase tracking-wider shadow-lg shadow-blue-600/10 border-t border-blue-400/20">
-                    <Zap className="size-3.5" /> Ajouter des leads
-                  </Button>
+                  <div className="relative">
+                    <Button 
+                      onClick={() => setIsAddLeadsOpen(!isAddLeadsOpen)}
+                      className="bg-blue-600 hover:bg-blue-500 text-white gap-2 h-10 rounded-xl px-4 text-xs font-bold uppercase tracking-wider shadow-lg shadow-blue-600/10 border-t border-blue-400/20"
+                    >
+                      <Zap className="size-3.5" /> Ajouter des leads
+                      <ChevronDown className={cn("size-3.5 transition-transform", isAddLeadsOpen ? "rotate-180" : "")} />
+                    </Button>
+
+                    <AnimatePresence>
+                      {isAddLeadsOpen && (
+                        <motion.div 
+                          initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                          animate={{ opacity: 1, y: 0, scale: 1 }}
+                          exit={{ opacity: 0, y: 10, scale: 0.95 }}
+                          className="absolute right-0 top-full mt-2 w-64 bg-[#0A0A0A] border border-white/10 rounded-xl shadow-[0_20px_50px_rgba(0,0,0,0.8)] z-[999] overflow-hidden"
+                        >
+                          <div className="p-2">
+                            <div className="px-3 py-2 mb-1 border-b border-white/5">
+                              <span className="text-[9px] font-bold text-white/40 uppercase tracking-[0.2em]">Source de données</span>
+                            </div>
+                            <button 
+                              onClick={() => {
+                                setIsAddLeadsOpen(false);
+                                setIsCsvModalOpen(true);
+                              }}
+                              className="w-full flex items-center gap-3 px-3 py-3 rounded-lg hover:bg-white/5 text-[11px] font-bold uppercase tracking-wider text-white/70 hover:text-white transition-all text-left group"
+                            >
+                              <div className="p-2 rounded-md bg-white/5 group-hover:bg-blue-500/10 group-hover:text-blue-400 transition-colors">
+                                <Upload className="size-4" />
+                              </div>
+                              Ajouter via Import CSV
+                            </button>
+                            <button 
+                              onClick={() => {
+                                setIsAddLeadsOpen(false);
+                                setIsLinkedInModalOpen(true);
+                              }}
+                              className="w-full flex items-center gap-3 px-3 py-3 rounded-lg hover:bg-white/5 text-[11px] font-bold uppercase tracking-wider text-white/70 hover:text-white transition-all text-left group"
+                            >
+                              <div className="p-2 rounded-md bg-white/5 group-hover:bg-[#0077b5]/10 group-hover:text-[#0077b5] transition-colors">
+                                <LinkedinIcon className="size-4" />
+                              </div>
+                              Ajouter via LinkedIn
+                            </button>
+                          </div>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                  </div>
                   <button 
-                    onClick={() => { setIsProspectsModalOpen(false); setSelectedProspect(null); }}
+                    onClick={() => { toggleProspectsModal(false); setSelectedProspect(null); }}
                     className="p-2 hover:bg-white/5 rounded-xl transition-all text-white/20 hover:text-white ml-2"
                   >
                     <X className="size-6" />
@@ -1233,20 +1525,40 @@ export function CampaignDashboardView({
                         <th className="pl-6 py-5 w-12 text-center">
                           <input 
                             type="checkbox" 
-                            checked={selectedIds.length > 0 && selectedIds.length === prospects.length}
+                            checked={selectedIds.length > 0 && selectedIds.length === displayProspects.length}
                             onChange={toggleSelectAll}
                             className="size-4 rounded border-[#1F1F1F] bg-black/40 text-blue-500 focus:ring-blue-500/20 cursor-pointer"
                           />
                         </th>
                         <th className="px-6 py-5 font-bold">Contact</th>
-                        <th className="px-6 py-5 font-bold">Signal</th>
-                        <th className="px-6 py-5 font-bold">Pertinence</th>
+                        <th className="px-6 py-5 font-bold text-center w-32">Pertinence</th>
+                        <th className="px-6 py-5 font-bold text-center w-32">Step</th>
+                        <th className="px-6 py-5 font-bold text-center">Date d'import</th>
                         <th className="px-6 py-5 font-bold">Email</th>
-                        <th className="px-6 py-5 font-bold text-right">Détails</th>
+                        <th className="px-6 py-5 font-bold text-right"></th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-[#1F1F1F]/50">
-                      {prospects.map((p, i) => {
+                      {isLoadingProspects ? (
+                        <tr>
+                          <td colSpan={8} className="py-20 text-center">
+                            <div className="flex flex-col items-center gap-4">
+                              <Loader2 className="size-8 animate-spin text-blue-500" />
+                              <p className="text-white/30 text-xs font-bold uppercase tracking-[0.2em]">Chargement des prospects...</p>
+                            </div>
+                          </td>
+                        </tr>
+                      ) : displayProspects.length === 0 ? (
+                        <tr>
+                          <td colSpan={8} className="py-20 text-center">
+                            <div className="flex flex-col items-center gap-4">
+                              <User className="size-8 text-white/10" />
+                              <p className="text-white/30 text-xs font-bold uppercase tracking-[0.2em]">Aucun prospect trouvé</p>
+                            </div>
+                          </td>
+                        </tr>
+                      ) : (
+                        displayProspects.map((p, i) => {
                         const isSelected = selectedIds.includes(p.id);
                         return (
                           <tr 
@@ -1272,80 +1584,75 @@ export function CampaignDashboardView({
                                     <p className="font-bold text-[15px] text-white/90 truncate group-hover:text-white transition-colors">
                                       {p.decision_maker ? (p.decision_maker.split(/[,|•-]/)[0].trim()) : "Inconnu"}
                                     </p>
-                                    <div className="text-blue-400/30 group-hover:text-blue-400 transition-colors">
-                                      <Link className="size-3" />
-                                    </div>
+                                    {p.linkedin_url && (
+                                      <a 
+                                        href={p.linkedin_url} 
+                                        target="_blank" 
+                                        rel="noopener noreferrer"
+                                        onClick={(e) => e.stopPropagation()}
+                                        className="text-white/20 hover:text-[#0077b5] transition-all hover:scale-110 active:scale-95"
+                                      >
+                                        <LinkedinIcon className="size-3.5" />
+                                      </a>
+                                    )}
                                   </div>
-                                  <div className="flex items-center gap-1.5 text-[11px] text-white/30 uppercase tracking-wider font-bold">
-                                    <span className="truncate max-w-[120px]">{p.role || "Décideur"}</span>
-                                    <span className="text-white/10">•</span>
-                                    <span className="truncate text-white/50">{p.company_name}</span>
-                                  </div>
+                                  <p className="text-[11px] text-white/40 font-medium">
+                                    {p.role || "Décideur"} {p.company_name && `@ ${p.company_name}`}
+                                  </p>
                                 </div>
                               </div>
                             </td>
-                            <td className="px-6 py-5">
-                              <div className="flex flex-col gap-1 max-w-[260px]">
-                                <p className="text-[13px] text-white/70 line-clamp-1 font-medium group-hover:text-white transition-colors">
-                                  {p.status === 'replied' ? 'Intérêt confirmé via Email' : 
-                                   p.status === 'contacted' ? 'Séquence active : Step 2' :
-                                   `Vient d'engager avec un post LinkedIn`}
-                                </p>
-                                <p className="text-[11px] text-white/20 truncate uppercase tracking-widest font-bold">
-                                  {p.company?.industry || 'Technologie'} • Il y a 2h
-                                </p>
-                              </div>
+                            <td className="px-6 py-5 text-center w-32">
+                              <span className={cn(
+                                "px-2.5 py-1 rounded-md text-[10px] font-bold border inline-block w-12",
+                                (p.fit_score || 0) >= 80 ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20" :
+                                (p.fit_score || 0) >= 50 ? "bg-orange-500/10 text-orange-400 border-orange-500/20" :
+                                "bg-red-500/10 text-red-400 border-red-500/20"
+                              )}>
+                                {(p.fit_score || 0) >= 80 ? '3/3' : (p.fit_score || 0) >= 50 ? '2/3' : '1/3'}
+                              </span>
                             </td>
-                            <td className="px-6 py-5">
-                              <div className="flex flex-col gap-1">
-                                <div className="flex items-center gap-1.5">
-                                  <Flame className={`size-3.5 ${p.fit_score >= 80 ? 'text-orange-500 animate-pulse' : p.fit_score >= 50 ? 'text-blue-400' : 'text-white/20'}`} />
-                                  <span className={`text-[12px] font-bold uppercase tracking-wider ${p.fit_score >= 80 ? 'text-white' : 'text-white/40'}`}>
-                                    Potentiel : {p.fit_score >= 80 ? 'Fort' : p.fit_score >= 50 ? 'Moyen' : 'Faible'}
-                                  </span>
-                                </div>
-                                <div className="w-20 h-1 bg-white/5 rounded-full overflow-hidden border border-white/5">
-                                  <div 
-                                    className={`h-full rounded-full transition-all duration-1000 ${p.fit_score >= 80 ? 'bg-gradient-to-r from-orange-600 to-orange-400 shadow-[0_0_12px_rgba(249,115,22,0.4)]' : p.fit_score >= 50 ? 'bg-blue-500' : 'bg-white/20'}`} 
-                                    style={{ width: `${p.fit_score || 0}%` }}
-                                  />
-                                </div>
-                              </div>
+                            <td className="px-6 py-5 text-center w-32">
+                              <span className={cn(
+                                "px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider border inline-block w-20",
+                                p.status === 'converted' 
+                                  ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
+                                  : "bg-blue-500/10 text-blue-400 border-blue-500/20"
+                              )}>
+                                {getStepLabel(p.status)}
+                              </span>
+                            </td>
+                            <td className="px-6 py-5 text-center text-[11px] text-white/70 font-bold uppercase tracking-wider">
+                              {p.created_at ? new Date(p.created_at).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' }) : "—"}
                             </td>
                             <td className="px-6 py-5">
                               <div className="flex items-center gap-3">
-                                <div className="p-2 rounded-xl bg-white/[0.03] border border-[#1F1F1F] text-white/30 group-hover:text-blue-400 group-hover:border-blue-500/30 transition-all">
-                                  <MailSearch className="size-4" />
-                                </div>
-                                <span className="text-[12px] text-white/50 font-medium lowercase truncate max-w-[150px]">
-                                  {p.email || (p.decision_maker ? `${p.decision_maker.toLowerCase().replace(/\s+/g, '.')}@${p.company_name?.toLowerCase().replace(/\s+/g, '') || 'company'}.com` : 'enrichir...')}
-                                </span>
+                                {p.email ? (
+                                  <div className="flex items-center gap-2">
+                                    <div className="p-1.5 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-500">
+                                      <Mail className="size-3.5" />
+                                    </div>
+                                    <span className="text-[12px] text-white/50 font-medium lowercase truncate max-w-[150px]">
+                                      {p.email}
+                                    </span>
+                                  </div>
+                                ) : (
+                                  <span className="text-[11px] text-white/20 font-bold uppercase tracking-widest">Not Found</span>
+                                )}
                               </div>
                             </td>
                             <td className="px-6 py-5 text-right">
-                              <div className="flex items-center justify-end gap-4" onClick={(e) => e.stopPropagation()}>
-                                <div className="flex items-center bg-black/60 rounded-xl border border-[#1F1F1F] p-1 opacity-0 group-hover:opacity-100 transition-all translate-x-4 group-hover:translate-x-0">
-                                  <button className="p-2 hover:bg-emerald-500/10 text-white/20 hover:text-emerald-500 rounded-lg transition-all" title="Approuver">
-                                    <CheckCircle2 className="size-4" />
-                                  </button>
-                                  <button className="p-2 hover:bg-white/10 text-white/20 hover:text-white rounded-lg transition-all" title="En attente">
-                                    <HelpCircle className="size-4" />
-                                  </button>
-                                  <button className="p-2 hover:bg-red-500/10 text-white/20 hover:text-red-500 rounded-lg transition-all" title="Rejeter">
-                                    <CircleSlash className="size-4" />
-                                  </button>
-                                </div>
-                                <button 
-                                  onClick={(e) => { e.stopPropagation(); setSelectedProspect(p); }}
-                                  className="p-2.5 hover:bg-white/5 rounded-xl text-white/20 hover:text-white transition-all group/btn"
-                                >
-                                  <Plus className="size-5 group-hover/btn:rotate-90 transition-transform duration-300" />
-                                </button>
-                              </div>
+                              <button 
+                                onClick={(e) => { e.stopPropagation(); setSelectedProspect(p); }}
+                                className="p-2.5 hover:bg-white/5 rounded-xl text-white/20 hover:text-white transition-all group/btn"
+                              >
+                                <Plus className="size-5 group-hover/btn:rotate-90 transition-transform duration-300" />
+                              </button>
                             </td>
                           </tr>
                         )
-                      })}
+                      })
+                    )}
                     </tbody>
                   </table>
                 </div>
@@ -1381,16 +1688,9 @@ export function CampaignDashboardView({
                           <p className="text-2xl font-bold text-emerald-400">{selectedProspect.fit_score || 0}%</p>
                         </div>
                         <div className="p-5 rounded-xl bg-white/[0.03] border border-[#1F1F1F] flex flex-col items-center justify-center text-center">
-                          <p className="text-[10px] text-white/20 uppercase tracking-[0.2em] font-bold mb-1.5">Statut</p>
-                          <p className="text-xs font-bold text-white uppercase tracking-wider mt-1 px-2 py-1 rounded bg-white/5">
-                            {{
-                              discovered: "Découvert",
-                              qualified: "Qualifié",
-                              disqualified: "Non qualifié",
-                              contacted: "Contacté",
-                              replied: "Répondu",
-                              meeting_booked: "Rdv"
-                            }[selectedProspect.status] || selectedProspect.status}
+                          <p className="text-[10px] text-white/20 uppercase tracking-[0.2em] font-bold mb-1.5">Step</p>
+                          <p className="text-xs font-bold text-white uppercase tracking-wider mt-1 px-3 py-1 rounded-full bg-blue-500/10 border border-blue-500/20">
+                            {getStepLabel(selectedProspect.status)}
                           </p>
                         </div>
                       </div>
@@ -1484,7 +1784,7 @@ export function CampaignDashboardView({
 
         {isFlowModalOpen && (
           <SequenceBuilderModal 
-            onClose={() => setIsFlowModalOpen(false)} 
+            onClose={() => toggleFlowModal(false)} 
             initialSteps={sequenceSteps || []} 
             onSave={async (steps) => {
               const { saveSequenceSteps } = await import("@/lib/flows/actions");
@@ -1495,7 +1795,7 @@ export function CampaignDashboardView({
         )}
         {isSettingsOpen && (
           <SettingsModal 
-            onClose={() => setIsSettingsOpen(false)} 
+            onClose={() => toggleSettingsModal(false)} 
             campaignName={campaignName} 
             campaign={campaign}
           />
@@ -1539,6 +1839,98 @@ export function CampaignDashboardView({
           </motion.div>
         )}
       </AnimatePresence>
+
+      <LinkedInExtensionModal 
+        isOpen={isLinkedInModalOpen} 
+        onClose={() => setIsLinkedInModalOpen(false)} 
+      />
     </div>
+  );
+}
+
+function LinkedInExtensionModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) {
+  const router = useRouter();
+  
+  return (
+    <AnimatePresence>
+      {isOpen && (
+        <div className="fixed inset-0 z-[1000] flex items-center justify-center p-4">
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={onClose}
+            className="absolute inset-0 bg-black/80 backdrop-blur-sm"
+          />
+          <motion.div
+            initial={{ opacity: 0, scale: 0.9, y: 20 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.9, y: 20 }}
+            className="relative w-full max-w-lg bg-[#0A0A0A] border border-white/10 rounded-3xl overflow-hidden shadow-2xl"
+          >
+            <div className="p-8">
+              <div className="flex items-start justify-between mb-8">
+                <div className="flex items-center gap-4">
+                  <div className="p-3 rounded-2xl bg-[#0077b5]/10 text-[#0077b5] border border-[#0077b5]/20">
+                    <LinkedinIcon className="size-6" />
+                  </div>
+                  <div>
+                    <h2 className="text-xl font-bold text-white tracking-tight">Extension LinkedIn Verytis</h2>
+                    <p className="text-sm text-white/40 mt-1">Prospectez directement depuis le réseau n°1</p>
+                  </div>
+                </div>
+                <button onClick={onClose} className="p-2 hover:bg-white/5 rounded-xl transition-colors text-white/20 hover:text-white">
+                  <X className="size-5" />
+                </button>
+              </div>
+
+              <div className="space-y-6 mb-10">
+                <div className="flex gap-4">
+                  <div className="size-6 rounded-full bg-blue-500/20 text-blue-400 text-[10px] font-bold flex items-center justify-center shrink-0 border border-blue-500/20">1</div>
+                  <div>
+                    <h4 className="text-[13px] font-bold text-white mb-1">Installez l'extension</h4>
+                    <p className="text-[12px] text-white/40 leading-relaxed">Téléchargez l'extension Verytis Pro sur le Chrome Web Store pour commencer le scraping.</p>
+                  </div>
+                </div>
+                <div className="flex gap-4">
+                  <div className="size-6 rounded-full bg-blue-500/20 text-blue-400 text-[10px] font-bold flex items-center justify-center shrink-0 border border-blue-500/20">2</div>
+                  <div>
+                    <h4 className="text-[13px] font-bold text-white mb-1">Activez "Verytis Pro"</h4>
+                    <p className="text-[12px] text-white/40 leading-relaxed">Une bulle flottante apparaîtra sur LinkedIn. Connectez-vous avec votre identifiant client.</p>
+                  </div>
+                </div>
+                <div className="flex gap-4">
+                  <div className="size-6 rounded-full bg-blue-500/20 text-blue-400 text-[10px] font-bold flex items-center justify-center shrink-0 border border-blue-500/20">3</div>
+                  <div>
+                    <h4 className="text-[13px] font-bold text-white mb-1">Scrapez en un clic</h4>
+                    <p className="text-[12px] text-white/40 leading-relaxed">Allez sur n'importe quel profil, recherche ou post et cliquez sur "Ajouter à la campagne".</p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <Button 
+                  onClick={() => router.push('/integrations')}
+                  variant="outline" 
+                  className="h-12 rounded-2xl border-white/10 bg-white/5 text-white hover:bg-white/10 font-bold gap-2"
+                >
+                  <Settings className="size-4" /> Voir l'Intégration
+                </Button>
+                <Button 
+                  onClick={() => window.open('https://linkedin.com', '_blank')}
+                  className="h-12 rounded-2xl bg-[#0077b5] hover:bg-[#0077b5]/90 text-white font-bold gap-2"
+                >
+                  <ExternalLink className="size-4" /> Ouvrir LinkedIn
+                </Button>
+              </div>
+            </div>
+
+            <div className="bg-[#0077b5]/5 border-t border-white/5 p-4 text-center">
+              <p className="text-[10px] text-[#0077b5] font-bold uppercase tracking-widest">L'IA s'occupe de l'enrichissement automatiquement</p>
+            </div>
+          </motion.div>
+        </div>
+      )}
+    </AnimatePresence>
   );
 }

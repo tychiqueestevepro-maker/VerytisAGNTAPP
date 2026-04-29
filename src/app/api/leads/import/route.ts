@@ -1,4 +1,4 @@
-import { createSupabaseServerClient, createSupabaseServiceClient } from '@/lib/supabase/server';
+import { createSupabaseServiceClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
 
 const PROSPECT_PHOTOS_BUCKET = 'prospect-photos';
@@ -21,8 +21,12 @@ type LeadInput = {
   scraped_at?: string | null;
 };
 
-async function ensureProspectPhotosBucket() {
-  const supabaseService = createSupabaseServiceClient();
+// Cache the bucket check to avoid redundant API calls
+let bucketEnsured = false;
+
+async function ensureProspectPhotosBucket(supabaseService: any) {
+  if (bucketEnsured) return;
+
   const { data: bucket, error: getError } = await supabaseService.storage.getBucket(PROSPECT_PHOTOS_BUCKET);
 
   if (!bucket && getError) {
@@ -53,10 +57,10 @@ async function ensureProspectPhotosBucket() {
     if (updateError) throw updateError;
   }
 
-  return supabaseService;
+  bucketEnsured = true;
 }
 
-async function uploadPhotoToBucket(url: string, clientId: string) {
+async function uploadPhotoToBucket(supabaseService: any, url: string, clientId: string) {
   if (!url) return null;
   const isDataUrl = url.startsWith('data:image/');
 
@@ -94,7 +98,8 @@ async function uploadPhotoToBucket(url: string, clientId: string) {
           : 'jpg';
     const filename = `${clientId}/${Date.now()}-${Math.random().toString(36).substring(7)}.${extension}`;
     
-    const supabaseService = await ensureProspectPhotosBucket();
+    await ensureProspectPhotosBucket(supabaseService);
+    
     const { error } = await supabaseService.storage
       .from(PROSPECT_PHOTOS_BUCKET)
       .upload(filename, buffer, {
@@ -115,12 +120,15 @@ async function uploadPhotoToBucket(url: string, clientId: string) {
 }
 
 export async function POST(request: Request) {
+  console.log('[API] Lead Import request received');
   try {
-    const supabase = await createSupabaseServerClient();
+    // IMPORTANT: Use service client to bypass RLS for extension imports which may be unauthenticated
+    const supabase = createSupabaseServiceClient();
     
-    // Récupération des données envoyées par l'extension
     const body = await request.json();
-    const { source, leads, clientId, campaignId } = body;
+    const { source, leads, clientId, campaignId, listId } = body;
+
+    console.log('[API] Import params:', { leadsCount: leads?.length, clientId, campaignId, listId });
 
     if (!leads || !Array.isArray(leads)) {
       return NextResponse.json({ error: 'Données de leads invalides' }, { status: 400 });
@@ -130,7 +138,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'ID Client manquant dans la requête' }, { status: 400 });
     }
 
-    // Vérification que le client existe bien dans la base
+    // Vérification que le client existe
     const { data: client, error: clientError } = await supabase
       .from('clients')
       .select('id')
@@ -138,6 +146,7 @@ export async function POST(request: Request) {
       .single();
 
     if (clientError || !client) {
+      console.error('[API] Client not found or error:', clientError);
       return NextResponse.json({ error: 'ID Client invalide ou inconnu' }, { status: 403 });
     }
 
@@ -146,8 +155,9 @@ export async function POST(request: Request) {
       const originalPhotoUrl = lead.photo_data_url || lead.photo_url || lead.image_url || null;
       let finalPhotoUrl = originalPhotoUrl;
       
-      if (originalPhotoUrl) {
-        finalPhotoUrl = await uploadPhotoToBucket(originalPhotoUrl, clientId);
+      // Only upload if it's not already a public storage URL
+      if (originalPhotoUrl && !originalPhotoUrl.includes(PROSPECT_PHOTOS_BUCKET)) {
+        finalPhotoUrl = await uploadPhotoToBucket(supabase, originalPhotoUrl, clientId);
       }
 
       return {
@@ -169,25 +179,67 @@ export async function POST(request: Request) {
       };
     }));
 
-    // Insertion dans la base de données
-    const { error } = await supabase
+    // Use UPSERT to handle existing prospects and get their IDs
+    // We assume a unique constraint on (client_id, linkedin_url) exists or we use linkedin_url as conflict target
+    const { data: insertedProspects, error } = await supabase
       .from('prospects')
-      .insert(prospectsToInsert)
-      .select();
+      .upsert(prospectsToInsert, { 
+        onConflict: 'client_id, linkedin_url',
+        ignoreDuplicates: false // We want to update them or at least get the IDs
+      })
+      .select('id');
 
     if (error) {
-      console.error('Erreur d\'insertion Supabase:', error);
-      return NextResponse.json({ error: error.message }, { status: 500 });
+      console.error('[API] Supabase insertion error:', error);
+      // Fallback: if 'client_id, linkedin_url' constraint doesn't exist, try just 'linkedin_url'
+      if (error.message.includes('constraint')) {
+         const { data: retryData, error: retryError } = await supabase
+           .from('prospects')
+           .upsert(prospectsToInsert, { onConflict: 'linkedin_url' })
+           .select('id');
+           
+         if (retryError) {
+            console.error('[API] Retry upsert failed:', retryError);
+            return NextResponse.json({ error: retryError.message }, { status: 500 });
+         }
+         // Continue with retry data
+      } else {
+        return NextResponse.json({ error: error.message }, { status: 500 });
+      }
+    }
+
+    const finalProspects = insertedProspects || [];
+    console.log('[API] Prospects inserted/upserted:', finalProspects.length);
+
+    // Link prospects to the list if listId is provided
+    if (listId && finalProspects.length > 0) {
+      const listMembers = finalProspects.map(p => ({
+        list_id: listId,
+        prospect_id: p.id
+      }));
+
+      console.log('[API] Adding to list members:', { listId, membersCount: listMembers.length });
+
+      // Use UPSERT for list members to avoid primary key violations on duplicates
+      const { error: listError } = await supabase
+        .from('prospect_list_members')
+        .upsert(listMembers, { onConflict: 'list_id, prospect_id' });
+
+      if (listError) {
+        console.error('[API] Error adding to list members:', listError);
+      } else {
+        console.log('[API] Successfully added to list members');
+      }
     }
 
     return NextResponse.json({ 
       success: true, 
-      message: `${prospectsToInsert.length} prospects importés avec succès.`,
+      message: `${prospectsToInsert.length} prospects traités avec succès.`,
       count: prospectsToInsert.length 
     });
 
   } catch (error: unknown) {
-    console.error('Erreur critique sur la route d\'import:', error);
+    console.error('[API] Critical error on import route:', error);
     const message = error instanceof Error ? error.message : 'Erreur inconnue';
     return NextResponse.json({ error: message }, { status: 500 });
   }

@@ -46,8 +46,15 @@ export function AppShell({ children, user }: { children: React.ReactNode; user: 
         className="fixed inset-y-0 left-0 z-30 flex border-r border-[#1F1F1F] bg-[#050505]/95"
       >
         <div className="flex min-w-0 flex-1 flex-col px-3 py-4">
-          <div className={cn("mb-10 flex items-center", collapsed ? "flex-col gap-6 -mx-2.5" : "justify-between")}>
-            <MarkIcon className="h-8 w-auto text-white/60 transition-all" />
+          <div className={cn("mb-6 flex items-center px-1", collapsed ? "flex-col gap-6" : "justify-between")}>
+            <img 
+              src="/logo.png" 
+              alt="Verytis" 
+              className={cn(
+                "h-14 w-auto object-contain invert grayscale contrast-125 opacity-70 transition-all duration-300 hover:opacity-100", 
+                collapsed ? "h-9" : "h-14"
+              )} 
+            />
             {!collapsed ? (
               <Button
                 variant="ghost"

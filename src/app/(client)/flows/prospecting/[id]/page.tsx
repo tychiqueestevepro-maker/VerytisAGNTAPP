@@ -74,37 +74,62 @@ export default async function CampaignDetailPage({ params }: Props) {
       action:run_type, 
       entity_type:status, 
       created_at,
-      agent:agents(name)
+      agent:agents(name),
+      prospect:prospects(decision_maker)
     `)
     .eq("client_id", user.profile.client_id)
     .order("created_at", { ascending: false })
     .limit(10);
 
   const activityMap: Record<string, string> = {
-    'hunter': 'Prospects identifiés',
-    'hunt': 'Prospects identifiés',
-    'qualifier': 'Qualification effectuée',
-    'copywriter': 'Message personnalisé généré',
-    'message_generation': 'Message personnalisé généré',
-    'outreach': 'Message envoyé',
-    'send_message': 'Message envoyé',
-    'qa': 'Contrôle qualité terminé',
-    'validation': 'Validation demandée',
-    'enrichment': 'Données enrichies'
+    'hunter': 'Import de nouveaux prospects',
+    'hunt': 'Analyse des profils terminée',
+    'qualifier': 'Qualification ICP effectuée',
+    'copywriter': 'Message prêt pour envoi',
+    'message_generation': 'Message prêt pour envoi',
+    'outreach': 'Étape du flow validée',
+    'send_message': 'Passage à l\'étape : Message',
+    'invitation': 'Passage à l\'étape : Invitation',
+    'acceptance': 'Invitation LinkedIn acceptée',
+    'response': 'Réponse reçue (Flow mis en pause)',
+    'qa': 'Flow débuté pour le prospect',
+    'validation': 'Flow terminé pour le prospect',
+    'enrichment': 'Données prospect complétées'
   };
 
-  const mappedActivities = (activities ?? []).map(act => ({
-    ...act,
-    type: act.action,
-    action: activityMap[act.action] || act.action.replace(/_/g, ' ').replace(/\b\w/g, (l: string) => l.toUpperCase())
+  const excludedTypes = ['enrichment', 'qualifier', 'hunt', 'message_generation', 'copywriter'];
+
+  const mappedActivities = (activities ?? [])
+    .filter(act => !excludedTypes.includes(act.action))
+    .map(act => {
+      const prospectName = (act as any).prospect?.decision_maker?.split(/[,|•-]/)[0].trim() || 'un prospect';
+      let actionLabel = activityMap[act.action] || act.action;
+
+      if (act.action === 'send_message') actionLabel = `Passage à l'étape Message pour ${prospectName}`;
+      else if (act.action === 'invitation') actionLabel = `Invitation envoyée à ${prospectName}`;
+      else if (act.action === 'acceptance') actionLabel = `Invitation acceptée par ${prospectName}`;
+      else if (act.action === 'response') actionLabel = `Réponse reçue de ${prospectName}`;
+      else if (act.action === 'outreach') actionLabel = `Étape du flow validée pour ${prospectName}`;
+      else if (act.action === 'qa') actionLabel = `Flow débuté pour ${prospectName}`;
+      else if (act.action === 'validation') actionLabel = `Flow terminé pour ${prospectName}`;
+
+      return {
+        ...act,
+        type: act.action,
+        action: actionLabel
+      };
+    });
+
+  const mappedProspects = (prospects ?? []).map(p => ({
+    ...p,
+    company: p.company?.[0] || null
   }));
 
   return (
     <>
-      <TopLine />
       <CampaignDashboardView
         campaign={campaign}
-        prospects={prospects ?? []}
+        prospects={mappedProspects as any}
         activities={mappedActivities as any}
         sequenceSteps={sequenceSteps ?? []}
       />
