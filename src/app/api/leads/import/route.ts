@@ -1,12 +1,17 @@
 import { createSupabaseServiceClient } from '@/lib/supabase/server';
+import { preScoreProspect } from '@/lib/prospecting/scoring';
 import { NextResponse } from 'next/server';
 
 const PROSPECT_PHOTOS_BUCKET = 'prospect-photos';
 const PROSPECT_PHOTO_MIME_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/avif'];
+type SupabaseServiceClient = ReturnType<typeof createSupabaseServiceClient>;
 
 type LeadInput = {
   name?: string | null;
+  first_name?: string | null;
+  last_name?: string | null;
   role?: string | null;
+  role_title?: string | null;
   title?: string | null;
   headline?: string | null;
   company?: string | null;
@@ -19,12 +24,20 @@ type LeadInput = {
   page_url?: string | null;
   source?: string | null;
   scraped_at?: string | null;
+  about?: string | null;
+  location?: string | null;
+  website?: string | null;
+  website_url?: string | null;
+  company_description?: string | null;
+  raw_result_text?: string | null;
+  scrape_mode?: string | null;
+  fast_import?: boolean | null;
 };
 
 // Cache the bucket check to avoid redundant API calls
 let bucketEnsured = false;
 
-async function ensureProspectPhotosBucket(supabaseService: any) {
+async function ensureProspectPhotosBucket(supabaseService: SupabaseServiceClient) {
   if (bucketEnsured) return;
 
   const { data: bucket, error: getError } = await supabaseService.storage.getBucket(PROSPECT_PHOTOS_BUCKET);
@@ -60,7 +73,7 @@ async function ensureProspectPhotosBucket(supabaseService: any) {
   bucketEnsured = true;
 }
 
-async function uploadPhotoToBucket(supabaseService: any, url: string, clientId: string) {
+async function uploadPhotoToBucket(supabaseService: SupabaseServiceClient, url: string, clientId: string) {
   if (!url) return null;
   const isDataUrl = url.startsWith('data:image/');
 
@@ -150,32 +163,79 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'ID Client invalide ou inconnu' }, { status: 403 });
     }
 
+    let campaign = null;
+    if (campaignId) {
+      const { data: campaignData, error: campaignError } = await supabase
+        .from('campaigns')
+        .select('*, client_flows!inner(client_id)')
+        .eq('id', campaignId)
+        .eq('client_flows.client_id', clientId)
+        .single();
+
+      if (campaignError || !campaignData) {
+        return NextResponse.json({ error: 'Campagne invalide pour ce client' }, { status: 403 });
+      }
+
+      campaign = campaignData;
+    }
+
     // Préparation des données pour la table 'prospects'
     const prospectsToInsert = await Promise.all(leads.map(async (lead: LeadInput) => {
       const originalPhotoUrl = lead.photo_data_url || lead.photo_url || lead.image_url || null;
       let finalPhotoUrl = originalPhotoUrl;
       
       // Only upload if it's not already a public storage URL
-      if (originalPhotoUrl && !originalPhotoUrl.includes(PROSPECT_PHOTOS_BUCKET)) {
+      if (originalPhotoUrl && !lead.fast_import && !originalPhotoUrl.includes(PROSPECT_PHOTOS_BUCKET)) {
         finalPhotoUrl = await uploadPhotoToBucket(supabase, originalPhotoUrl, clientId);
       }
 
-      return {
+      const fullName = lead.name || [lead.first_name, lead.last_name].filter(Boolean).join(' ') || 'Inconnu';
+      const role = lead.role || lead.role_title || lead.title || lead.headline || null;
+      const companyName = lead.company || lead.company_name || null;
+      const linkedinUrl = lead.profile_url || lead.linkedin_url || null;
+      const website = lead.website || lead.website_url || null;
+      const companyDescription = lead.company_description || lead.about || lead.raw_result_text || lead.headline || null;
+
+      const baseProspect = {
         client_id: clientId,
         campaign_id: campaignId || null,
-        decision_maker: lead.name || 'Inconnu',
-        role: lead.role || lead.title || lead.headline || null,
-        company_name: lead.company || lead.company_name || null,
-        linkedin_url: lead.profile_url || lead.linkedin_url || null,
+        decision_maker: fullName,
+        role,
+        company_name: companyName,
+        linkedin_url: linkedinUrl,
         photo_url: finalPhotoUrl,
         source_url: lead.page_url || null,
         source: lead.source || source || 'linkedin',
+        website,
+        location: lead.location || null,
         status: 'discovered',
+        full_name: fullName,
+        role_title: role,
+        company_description: companyDescription,
+        profile_url: linkedinUrl,
+        website_url: website,
+        raw_data: lead,
         extra_data: {
+          raw_data: lead,
           scraped_at: lead.scraped_at,
           imported_via: 'chrome_extension',
-          original_headline: lead.headline || null
+          original_headline: lead.headline || null,
+          about: lead.about || null,
+          company_description: companyDescription,
+          raw_result_text: lead.raw_result_text || null,
+          scrape_mode: lead.scrape_mode || null,
+          fast_import: Boolean(lead.fast_import)
         }
+      };
+
+      const preScore = campaign ? preScoreProspect(baseProspect, campaign) : null;
+
+      return {
+        ...baseProspect,
+        fit_score: preScore?.score ?? null,
+        pre_score: preScore?.score ?? null,
+        pre_score_level: preScore?.level ?? null,
+        qualification_status: preScore ? 'pre_scored' : 'collected'
       };
     }));
 
@@ -188,6 +248,8 @@ export async function POST(request: Request) {
         ignoreDuplicates: false // We want to update them or at least get the IDs
       })
       .select('id');
+
+    let finalProspects = insertedProspects || [];
 
     if (error) {
       console.error('[API] Supabase insertion error:', error);
@@ -202,18 +264,18 @@ export async function POST(request: Request) {
             console.error('[API] Retry upsert failed:', retryError);
             return NextResponse.json({ error: retryError.message }, { status: 500 });
          }
-         // Continue with retry data
+         finalProspects = retryData || [];
       } else {
         return NextResponse.json({ error: error.message }, { status: 500 });
       }
     }
 
-    const finalProspects = insertedProspects || [];
+    finalProspects = finalProspects || [];
     console.log('[API] Prospects inserted/upserted:', finalProspects.length);
 
     // Link prospects to the list if listId is provided
     if (listId && finalProspects.length > 0) {
-      const listMembers = finalProspects.map(p => ({
+      const listMembers = finalProspects.map((p: { id: string }) => ({
         list_id: listId,
         prospect_id: p.id
       }));

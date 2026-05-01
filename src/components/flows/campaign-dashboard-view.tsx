@@ -43,13 +43,14 @@ import {
   FolderOpen,
   ArrowRight,
   Download,
-  UserPlus,
-  Send
+  Send,
+  Phone
 } from "lucide-react";
-import { 
+import {
   getOrganizationProspects,
   getContactLists,
   getProspectsByList,
+  qualifyProspects,
 } from "@/lib/flows/actions";
 import { Button } from "@/components/ui/button";
 import { SequenceBuilderModal } from "./sequence-builder";
@@ -64,11 +65,13 @@ interface Campaign {
   status: CampaignStatus;
   created_at: string;
   config?: any;
+  source?: string | null;
   sequence_id?: string | null;
 }
 
 interface Prospect {
   id: string;
+  campaign_id?: string | null;
   company_name: string;
   decision_maker: string;
   role: string;
@@ -79,9 +82,23 @@ interface Prospect {
   website?: string | null;
   location?: string | null;
   linkedin_url?: string | null;
+  source?: string | null;
   email?: string | null;
+  phone?: string | null;
   created_at?: string;
   extra_data?: any;
+  full_name?: string | null;
+  role_title?: string | null;
+  company_description?: string | null;
+  profile_url?: string | null;
+  website_url?: string | null;
+  raw_data?: any;
+  pre_score?: number | null;
+  pre_score_level?: "high" | "medium" | "low" | null;
+  qualification_status?: "collected" | "pre_scored" | "to_qualify" | "qualified" | "rejected" | null;
+  qualification_level?: "high" | "medium" | "low" | null;
+  qualification_reason?: string | null;
+  suggested_message?: string | null;
   company?: {
     industry?: string | null;
     size_range?: string | null;
@@ -150,7 +167,7 @@ const ProspectAvatar = ({ name, photoUrl, colorIndex }: { name: string; photoUrl
     .join("")
     .slice(0, 2)
     .toUpperCase();
-  
+
   const colors = [
     "bg-blue-500/20 text-blue-400 border-blue-500/30",
     "bg-purple-500/20 text-purple-400 border-purple-500/30",
@@ -158,7 +175,7 @@ const ProspectAvatar = ({ name, photoUrl, colorIndex }: { name: string; photoUrl
     "bg-amber-500/20 text-amber-400 border-amber-500/30",
     "bg-rose-500/20 text-rose-400 border-rose-500/30",
   ];
-  
+
   const colorClass = colors[colorIndex % colors.length];
 
   return (
@@ -166,6 +183,94 @@ const ProspectAvatar = ({ name, photoUrl, colorIndex }: { name: string; photoUrl
       {initials || <User className="size-4" />}
     </div>
   );
+};
+
+const getPreScoreLevel = (prospect: Prospect): "high" | "medium" | "low" => {
+  if (prospect.pre_score_level) return prospect.pre_score_level;
+  const score = prospect.pre_score ?? prospect.fit_score ?? 0;
+  if (score >= 70) return "high";
+  if (score >= 40) return "medium";
+  return "low";
+};
+
+const PRE_SCORE_META: Record<"high" | "medium" | "low", { label: string; shortLabel: string; className: string }> = {
+  high: {
+    label: "Pertinence élevée",
+    shortLabel: "Élevée",
+    className: "bg-emerald-500/10 text-emerald-400 border-emerald-500/20",
+  },
+  medium: {
+    label: "Pertinence moyenne",
+    shortLabel: "Moyenne",
+    className: "bg-orange-500/10 text-orange-400 border-orange-500/20",
+  },
+  low: {
+    label: "Pertinence faible",
+    shortLabel: "Faible",
+    className: "bg-red-500/10 text-red-400 border-red-500/20",
+  },
+};
+
+const QUALIFICATION_META: Record<"high" | "medium" | "low", { label: string; className: string }> = {
+  high: {
+    label: "Qualification élevée",
+    className: "bg-emerald-500/10 text-emerald-400 border-emerald-500/20",
+  },
+  medium: {
+    label: "Qualification moyenne",
+    className: "bg-orange-500/10 text-orange-400 border-orange-500/20",
+  },
+  low: {
+    label: "Qualification faible",
+    className: "bg-red-500/10 text-red-400 border-red-500/20",
+  },
+};
+
+const getQualificationMeta = (prospect: Prospect) => {
+  if (!prospect.qualification_level) {
+    return {
+      label: prospect.qualification_status === "to_qualify" ? "En qualification" : "Non qualifié",
+      className: "bg-white/[0.03] text-white/40 border-white/10",
+    };
+  }
+  return QUALIFICATION_META[prospect.qualification_level];
+};
+
+const normalizeProspectList = (prospects: any[]): Prospect[] => prospects.map((prospect) => ({
+  ...prospect,
+  company: Array.isArray(prospect.company) ? prospect.company[0] || null : prospect.company || null,
+}));
+
+const getTitleAndCompany = (role: string, companyName?: string | null) => {
+  if (!role || role === "Décideur") {
+    return { title: "Décideur", company: companyName || "" };
+  }
+
+  // Detect if the role already contains an "@" or " at " and handle it
+  const parts = role.split(/[@|•\-–]| at /i);
+  let title = parts[0].trim();
+  let company = (companyName || "").trim();
+
+  // If company name is missing, try to extract it from the second part of the headline
+  if (!company && parts.length > 1) {
+    company = parts[1].trim();
+  }
+
+  // If the title ends with the company name (without separator), strip it from title
+  if (company && title.toLowerCase().endsWith(company.toLowerCase())) {
+    const stripped = title.substring(0, title.length - company.length).trim();
+    const cleaned = stripped.replace(/[@|•\-–·\s,:]+$/, '').trim();
+    if (cleaned.length >= 2) {
+      title = cleaned;
+    }
+  }
+
+  // If the title now exactly matches the company, return it as title only
+  if (title.toLowerCase() === company.toLowerCase()) {
+    return { title, company: "" };
+  }
+
+  return { title, company };
 };
 
 // ============================================================================
@@ -193,11 +298,11 @@ function CsvImportModal({ onClose, campaignId }: { onClose: () => void; campaign
           try {
             const { createSupabaseBrowserClient } = await import("@/lib/supabase/client");
             const supabase = createSupabaseBrowserClient();
-            
+
             // Upload to storage for archiving
             const timestamp = new Date().getTime();
             const fileName = `${campaignId}_${timestamp}.csv`;
-            
+
             await supabase.storage
               .from('csv_imports')
               .upload(fileName, file);
@@ -206,7 +311,7 @@ function CsvImportModal({ onClose, campaignId }: { onClose: () => void; campaign
           }
 
           const { importProspectsCSV } = await import("@/lib/flows/import");
-          const res = await importProspectsCSV(campaignId, results.data);
+          const res = await importProspectsCSV(campaignId, results.data as Record<string, unknown>[]);
           if (res.success) {
             router.refresh();
             onClose();
@@ -237,10 +342,10 @@ function CsvImportModal({ onClose, campaignId }: { onClose: () => void; campaign
             <X className="size-4" />
           </button>
         </div>
-        
+
         <div className="space-y-4">
           <p className="text-sm text-white/60">Importez un fichier CSV UTF-8. Champs recommandés : <code className="text-xs bg-white/5 px-1 py-0.5 rounded">Email</code>, <code className="text-xs bg-white/5 px-1 py-0.5 rounded">FirstName</code>, <code className="text-xs bg-white/5 px-1 py-0.5 rounded">LastName</code>, <code className="text-xs bg-white/5 px-1 py-0.5 rounded">CompanyName</code>, <code className="text-xs bg-white/5 px-1 py-0.5 rounded">LinkedInURL</code>.</p>
-          
+
           <div className="relative border-2 border-dashed border-white/20 rounded-xl p-8 hover:border-white/40 transition-colors bg-white/[0.02] text-center cursor-pointer">
             <input type="file" accept=".csv" onChange={handleFileUpload} disabled={isUploading} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" />
             <div className="flex flex-col items-center justify-center pointer-events-none">
@@ -325,7 +430,7 @@ function FlowCanvasModal({ onClose, sequenceSteps }: { onClose: () => void; sequ
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 md:p-8">
-      <motion.div 
+      <motion.div
         initial={{ opacity: 0, scale: 0.95 }}
         animate={{ opacity: 1, scale: 1 }}
         exit={{ opacity: 0, scale: 0.95 }}
@@ -350,11 +455,11 @@ function FlowCanvasModal({ onClose, sequenceSteps }: { onClose: () => void; sequ
         </div>
 
         <div className="flex-1 relative overflow-hidden" ref={containerRef}>
-          <div 
-            className="absolute inset-0 opacity-[0.03] pointer-events-none" 
+          <div
+            className="absolute inset-0 opacity-[0.03] pointer-events-none"
             style={{ backgroundImage: 'radial-gradient(circle at 1px 1px, white 1px, transparent 0)', backgroundSize: '40px 40px' }}
           />
-          
+
           <div className="absolute bottom-6 left-6 flex items-center gap-1 p-1 bg-white/5 border border-white/10 rounded-lg backdrop-blur-md z-10">
             <button onClick={() => setZoom(z => Math.max(0.5, z - 0.1))} className="p-2 hover:bg-white/10 rounded-md text-white/60 hover:text-white transition-colors">
               <ZoomOut className="size-4" />
@@ -385,7 +490,7 @@ function FlowCanvasModal({ onClose, sequenceSteps }: { onClose: () => void; sequ
                     <X className="size-4" />
                   </button>
                 </div>
-                
+
                 <div className="flex-1 space-y-6 overflow-y-auto pr-2">
                   <div>
                     <label className="text-xs text-white/50 uppercase tracking-wider mb-2 block font-medium">Titre de l'action</label>
@@ -400,7 +505,7 @@ function FlowCanvasModal({ onClose, sequenceSteps }: { onClose: () => void; sequ
                     <p className="text-xs text-white/60">Cette étape est gérée dynamiquement par le moteur. Modifiez les prompts dans la section Configuration Agent.</p>
                   </div>
                 </div>
-                
+
                 <div className="pt-6 border-t border-white/10 mt-auto flex gap-3">
                   <Button variant="outline" onClick={() => setEditingStep(null)} className="flex-1 bg-transparent border-white/10 text-white hover:bg-white/5">Annuler</Button>
                   <Button onClick={() => setEditingStep(null)} className="flex-1 bg-white text-black hover:bg-white/90">Sauvegarder</Button>
@@ -409,8 +514,8 @@ function FlowCanvasModal({ onClose, sequenceSteps }: { onClose: () => void; sequ
             )}
           </AnimatePresence>
 
-          <div 
-            className="absolute inset-0 overflow-auto flex flex-col items-center py-20 select-none" 
+          <div
+            className="absolute inset-0 overflow-auto flex flex-col items-center py-20 select-none"
             style={{ cursor: isDragging ? 'grabbing' : 'grab' }}
             ref={containerRef}
             onMouseDown={handleMouseDown}
@@ -418,7 +523,7 @@ function FlowCanvasModal({ onClose, sequenceSteps }: { onClose: () => void; sequ
             onMouseUp={handleMouseUpOrLeave}
             onMouseLeave={handleMouseUpOrLeave}
           >
-            <motion.div 
+            <motion.div
               className="flex flex-col items-center min-w-max"
               animate={{ scale: zoom }}
               transition={{ type: "spring", stiffness: 300, damping: 30 }}
@@ -484,7 +589,7 @@ function SettingsModal({ onClose, campaignName, campaign }: { onClose: () => voi
   const [activeTab, setActiveTab] = useState<'config' | 'prospection' | 'injection'>('prospection');
   const [isSaving, setIsSaving] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
-  
+
   const [localProspectsPerDay, setLocalProspectsPerDay] = useState(campaign.config?.prospection?.prospects_per_day || 20);
   const [localSearchTime, setLocalSearchTime] = useState(campaign.config?.prospection?.search_time || "09:00");
 
@@ -509,11 +614,11 @@ function SettingsModal({ onClose, campaignName, campaign }: { onClose: () => voi
 
   const handleDelete = async () => {
     if (!confirm("Êtes-vous sûr de vouloir supprimer cette campagne ? Cette action est irréversible.")) return;
-    
+
     setIsDeleting(true);
     const { setCampaignStatus } = await import("@/lib/flows/actions");
     const result = await setCampaignStatus(campaign.id, "archived");
-    
+
     if (result.success) {
       router.push("/flows/prospecting");
     } else {
@@ -524,7 +629,7 @@ function SettingsModal({ onClose, campaignName, campaign }: { onClose: () => voi
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 md:p-8">
-      <motion.div 
+      <motion.div
         initial={{ opacity: 0, scale: 0.95 }}
         animate={{ opacity: 1, scale: 1 }}
         exit={{ opacity: 0, scale: 0.95 }}
@@ -556,8 +661,8 @@ function SettingsModal({ onClose, campaignName, campaign }: { onClose: () => voi
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id as any)}
                 className={`flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all ${
-                  activeTab === tab.id 
-                    ? "bg-white/10 text-white border border-white/10 shadow-lg" 
+                  activeTab === tab.id
+                    ? "bg-white/10 text-white border border-white/10 shadow-lg"
                     : "text-white/40 hover:bg-white/5 hover:text-white border border-transparent"
                 }`}
               >
@@ -595,7 +700,7 @@ function SettingsModal({ onClose, campaignName, campaign }: { onClose: () => voi
                     <h3 className="text-xs font-bold text-white/40 uppercase tracking-[0.2em] flex items-center gap-2">
                       <span className="size-1.5 rounded-full bg-blue-400" /> 🎯 Prospection & Cible
                     </h3>
-                    
+
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                       <div className="p-6 rounded-2xl bg-white/[0.02] border border-white/5 space-y-4">
                         <label className="text-xs text-white/30 uppercase tracking-wider font-medium">Secteurs & Taille</label>
@@ -701,7 +806,7 @@ function SettingsModal({ onClose, campaignName, campaign }: { onClose: () => voi
             </AnimatePresence>
           </div>
         </div>
-        
+
         <div className="p-6 border-t border-white/10 bg-[#050505] flex justify-between items-center shrink-0">
           <Button variant="ghost" onClick={handleDelete} disabled={isDeleting} className="text-red-500 hover:text-red-400 hover:bg-red-500/10 px-4 gap-2">
             {isDeleting ? <Loader2 className="size-4 animate-spin" /> : <X className="size-4" />}
@@ -724,15 +829,15 @@ function SettingsModal({ onClose, campaignName, campaign }: { onClose: () => voi
 // MAIN DASHBOARD COMPONENT
 // ============================================================================
 
-export function CampaignDashboardView({ 
-  campaign, 
-  prospects: initialProspects, 
+export function CampaignDashboardView({
+  campaign,
+  prospects: initialProspects,
   activities,
   sequenceSteps
-}: { 
-  campaign: Campaign; 
-  prospects: Prospect[]; 
-  activities: ActivityLog[]; 
+}: {
+  campaign: Campaign;
+  prospects: Prospect[];
+  activities: ActivityLog[];
   sequenceSteps?: any[];
 }) {
   const router = useRouter();
@@ -761,16 +866,16 @@ export function CampaignDashboardView({
   // Re-sync displayProspects when initialProspects changes
   useEffect(() => {
     const filtered = initialProspects.filter(p => {
-      const matchesSearch = !searchQuery || 
+      const matchesSearch = !searchQuery ||
         p.decision_maker?.toLowerCase().includes(searchQuery.toLowerCase()) ||
         p.company_name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
         p.email?.toLowerCase().includes(searchQuery.toLowerCase());
-      
+
       const matchesStep = filterStep === "all" || getStepLabel(p.status) === filterStep;
-      
-      const pPertinence = (p.fit_score || 0) >= 80 ? '3/3' : (p.fit_score || 0) >= 50 ? '2/3' : '1/3';
+
+      const pPertinence = getPreScoreLevel(p);
       const matchesPertinence = filterPertinence === "all" || pPertinence === filterPertinence;
-      
+
       const matchesEmail = filterEmail === "all" || (filterEmail === "has" ? !!p.email : !p.email);
 
       return matchesSearch && matchesStep && matchesPertinence && matchesEmail;
@@ -784,9 +889,9 @@ export function CampaignDashboardView({
         const stepOrder: Record<string, number> = { 'Step 1': 1, 'Step 2': 2, 'Step 3': 3, 'End': 4 };
         valA = stepOrder[getStepLabel(a.status)] || 0;
         valB = stepOrder[getStepLabel(b.status)] || 0;
-      } else if (sortBy === 'fit_score') {
-        valA = a.fit_score || 0;
-        valB = b.fit_score || 0;
+      } else if (sortBy === 'pre_score') {
+        valA = a.pre_score ?? a.fit_score ?? 0;
+        valB = b.pre_score ?? b.fit_score ?? 0;
       } else if (sortBy === 'created_at') {
         valA = new Date(a.created_at || 0).getTime();
         valB = new Date(b.created_at || 0).getTime();
@@ -809,7 +914,7 @@ export function CampaignDashboardView({
       try {
         if (activeProspectTab === "all") {
           const { data, error } = await getOrganizationProspects();
-          if (!error && data) setDisplayProspects(data);
+          if (!error && data) setDisplayProspects(normalizeProspectList(data));
         } else if (activeProspectTab === "lists") {
           const { data, error } = await getContactLists();
           if (!error && data) {
@@ -820,12 +925,12 @@ export function CampaignDashboardView({
           }
           if (selectedListId) {
             const { data: listProspects, error: listError } = await getProspectsByList(selectedListId);
-            if (!listError && listProspects) setDisplayProspects(listProspects);
+            if (!listError && listProspects) setDisplayProspects(normalizeProspectList(listProspects));
           } else {
             setDisplayProspects([]);
           }
         } else {
-          setDisplayProspects(initialProspects);
+          setDisplayProspects(normalizeProspectList(initialProspects));
         }
       } catch (err) {
         console.error("Error fetching data:", err);
@@ -838,10 +943,11 @@ export function CampaignDashboardView({
   }, [activeProspectTab, isProspectsModalOpen, selectedListId, initialProspects]);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [qualifyingIds, setQualifyingIds] = useState<string[]>([]);
   const [campaignName, setCampaignName] = useState(campaign.display_name || "Campagne Sans Nom");
   const [isEditingName, setIsEditingName] = useState(false);
   const nameInputRef = useRef<HTMLInputElement>(null);
-  
+
   const [filterScore, setFilterScore] = useState(0);
   const [filterStatus, setFilterStatus] = useState<string>("all");
 
@@ -894,7 +1000,7 @@ export function CampaignDashboardView({
     const newStatus = campaign.status === "active" ? "paused" : "active";
     const { setCampaignStatus } = await import("@/lib/flows/actions");
     const result = await setCampaignStatus(campaign.id, newStatus);
-    
+
     if (result.success) {
       router.refresh();
     } else {
@@ -930,11 +1036,51 @@ export function CampaignDashboardView({
     setSelectedIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
   };
 
+  const patchProspects = (updatedProspects: Prospect[]) => {
+    if (updatedProspects.length === 0) return;
+    const normalized = normalizeProspectList(updatedProspects);
+    const byId = new Map(normalized.map((prospect) => [prospect.id, prospect]));
+
+    setDisplayProspects((prev) => prev.map((prospect) => {
+      const updated = byId.get(prospect.id);
+      return updated ? { ...prospect, ...updated } : prospect;
+    }));
+
+    setSelectedProspect((prev) => {
+      if (!prev) return prev;
+      const updated = byId.get(prev.id);
+      return updated ? { ...prev, ...updated } as Prospect : prev;
+    });
+  };
+
+  const handleQualify = async (ids: string[]) => {
+    const uniqueIds = Array.from(new Set(ids)).filter(Boolean);
+    if (uniqueIds.length === 0) return;
+
+    setQualifyingIds((prev) => Array.from(new Set([...prev, ...uniqueIds])));
+    try {
+      const result = await qualifyProspects(uniqueIds);
+
+      patchProspects(result.data as Prospect[]);
+      setSelectedIds((prev) => prev.filter((id) => !uniqueIds.includes(id)));
+
+      if (result.errors.length > 0) {
+        alert(result.errors.map((item) => item.error).join("\n"));
+      }
+
+      router.refresh();
+    } catch (error: any) {
+      alert(error?.message || "Erreur lors de la qualification");
+    } finally {
+      setQualifyingIds((prev) => prev.filter((id) => !uniqueIds.includes(id)));
+    }
+  };
+
   const isPaused = campaign.status === "paused";
 
   return (
     <div className="flex flex-col min-h-[calc(100vh-64px)] w-full bg-black text-white font-sans overflow-y-auto">
-      
+
       {/* HEADER */}
       {!isProspectsModalOpen && (
         <header className="shrink-0 border-b border-white/10 px-8 py-5 flex items-center justify-between bg-[#050505] sticky top-0 z-20">
@@ -1094,7 +1240,7 @@ export function CampaignDashboardView({
                 <h2 className="text-xl font-semibold flex items-center gap-2 shrink-0">
                   <User className="size-5 text-white/40" /> Contacts de la campagne
                 </h2>
-                <button 
+                <button
                   onClick={() => toggleProspectsModal(true)}
                   className="p-2 hover:bg-white/5 rounded-lg transition-colors group/zoom 2xl:ml-2"
                   title="Agrandir la liste"
@@ -1111,9 +1257,9 @@ export function CampaignDashboardView({
                 <thead className={`bg-[#080808] border-b border-[#1F1F1F] text-white/20 text-[10px] uppercase tracking-[0.2em] font-bold sticky top-0 ${isProspectsModalOpen ? 'z-10' : 'z-30'}`}>
                   <tr>
                     <th className="pl-6 py-4 font-bold">Prospect</th>
-                    <th className="px-6 py-4 font-bold text-center w-32">Pertinence</th>
                     <th className="px-6 py-4 font-bold text-center w-32">Step</th>
-                    <th className="px-6 py-4 font-bold text-right w-16"></th>
+                    <th className="px-6 py-4 font-bold text-center w-40">Pré-pertinence</th>
+                    <th className="px-6 py-4 font-bold text-right w-44"></th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-white/5">
@@ -1122,6 +1268,8 @@ export function CampaignDashboardView({
                   ) : (
                     displayProspects.slice(0, 6).map((p: Prospect, i: number) => {
                       const isSelected = selectedIds.includes(p.id);
+                      const preScoreMeta = PRE_SCORE_META[getPreScoreLevel(p)];
+                      const isQualifying = qualifyingIds.includes(p.id);
                       return (
                         <tr key={p.id} className={`hover:bg-white/[0.02] transition-colors group cursor-pointer border-b border-white/5 last:border-0 ${isSelected ? "bg-blue-500/5" : ""}`}>
                           <td className="px-6 py-4">
@@ -1129,11 +1277,11 @@ export function CampaignDashboardView({
                             <ProspectAvatar name={p.decision_maker || p.company_name} photoUrl={p.photo_url} colorIndex={i} />
                             <div>
                               <p className="font-bold text-[15px] text-white group-hover:text-blue-400 transition-colors flex items-center gap-2">
-                                {p.decision_maker ? (p.decision_maker.split(/[,|•-]/)[0].trim()) : "Inconnu"}
+                                {p.decision_maker ? (p.decision_maker.split(/[,|•]/)[0].split(/\s-\s/)[0].trim()) : "Inconnu"}
                                 {p.linkedin_url && (
-                                  <a 
-                                    href={p.linkedin_url} 
-                                    target="_blank" 
+                                  <a
+                                    href={p.linkedin_url}
+                                    target="_blank"
                                     rel="noopener noreferrer"
                                     onClick={(e) => e.stopPropagation()}
                                     className="text-white/20 hover:text-[#0077b5] transition-all hover:scale-110 active:scale-95"
@@ -1142,39 +1290,59 @@ export function CampaignDashboardView({
                                   </a>
                                 )}
                               </p>
-                              <p className="text-[11px] text-white/40 font-medium">
-                                {p.role || "Décideur"} {p.company_name && `@ ${p.company_name}`}
-                              </p>
+                              {(() => {
+                                const { title, company } = getTitleAndCompany(p.role, p.company_name);
+                                return (
+                                  <div className="flex flex-col mt-0.5">
+                                    <p className="text-[11px] text-white/60 font-medium leading-tight">
+                                      {title}
+                                    </p>
+                                    {company && (
+                                      <p className="text-[10px] text-white/30 font-medium leading-tight mt-0.5">
+                                        @ {company}
+                                      </p>
+                                    )}
+                                  </div>
+                                );
+                              })()}
                             </div>
                           </div>
                         </td>
                         <td className="px-6 py-4 text-center w-32">
                           <span className={cn(
-                            "px-2.5 py-1 rounded-md text-[10px] font-bold border inline-block w-12",
-                            (p.fit_score || 0) >= 80 ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20" :
-                            (p.fit_score || 0) >= 50 ? "bg-orange-500/10 text-orange-400 border-orange-500/20" :
-                            "bg-red-500/10 text-red-400 border-red-500/20"
-                          )}>
-                            {(p.fit_score || 0) >= 80 ? '3/3' : (p.fit_score || 0) >= 50 ? '2/3' : '1/3'}
-                          </span>
-                        </td>
-                        <td className="px-6 py-4 text-center w-32">
-                          <span className={cn(
                             "px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider border inline-block w-20",
-                            p.status === 'converted' 
+                            p.status === 'converted'
                               ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
                               : "bg-blue-500/10 text-blue-400 border-blue-500/20"
                           )}>
                             {getStepLabel(p.status)}
                           </span>
                         </td>
-                        <td className="px-6 py-4 text-right">
-                          <button 
-                            onClick={(e) => { e.stopPropagation(); setSelectedProspect(p); toggleProspectsModal(true); }}
-                            className="p-2.5 hover:bg-white/5 rounded-xl text-white/20 hover:text-white transition-all group/btn"
-                          >
-                            <Plus className="size-5 group-hover/btn:rotate-90 transition-transform duration-300" />
-                          </button>
+                        <td className="px-6 py-4 text-center w-40">
+                          <span className={cn(
+                            "px-3 py-1 rounded-md text-[10px] font-bold border inline-block min-w-[92px]",
+                            preScoreMeta.className
+                          )}>
+                            {preScoreMeta.shortLabel}
+                          </span>
+                        </td>
+                        <td className="px-6 py-4 text-right w-44">
+                          <div className="flex items-center justify-end gap-2">
+                            <Button
+                              onClick={(e) => { e.stopPropagation(); handleQualify([p.id]); }}
+                              disabled={isQualifying}
+                              className="h-8 px-3 rounded-lg bg-white/10 hover:bg-white/15 text-white border border-white/10 text-[11px] font-bold gap-2 shrink-0"
+                            >
+                              {isQualifying ? <Loader2 className="size-3.5 animate-spin" /> : <CheckCircle2 className="size-3.5" />}
+                              Qualifier
+                            </Button>
+                            <button
+                              onClick={(e) => { e.stopPropagation(); setSelectedProspect(p); toggleProspectsModal(true); }}
+                              className="size-8 flex items-center justify-center hover:bg-white/5 rounded-lg text-white/20 hover:text-white transition-all group/btn shrink-0"
+                            >
+                              <Plus className="size-4 group-hover/btn:rotate-90 transition-transform duration-300" />
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     );
@@ -1206,8 +1374,7 @@ export function CampaignDashboardView({
                   {activities.map((act) => (
                     <div key={act.id} className="relative flex items-start gap-4">
                       <div className="flex items-center justify-center w-10 h-10 rounded-full border border-white/10 bg-[#0c0c0c] shrink-0 relative z-10 text-white/40 shadow-xl">
-                        {act.type?.includes('hunt') || act.type?.includes('hunter') ? <UserPlus className="size-4" /> : 
-                         act.type?.includes('message') || act.type?.includes('outreach') ? <Send className="size-4" /> : 
+                        {act.type?.includes('message') || act.type?.includes('outreach') ? <Send className="size-4" /> :
                          act.type?.includes('response') ? <MessageSquare className="size-4" /> :
                          act.type?.includes('qa') || act.type?.includes('validation') ? <CheckCircle2 className="size-4" /> :
                          <Zap className="size-4" />}
@@ -1222,8 +1389,7 @@ export function CampaignDashboardView({
                           </span>
                         </div>
                         <p className="text-xs text-white/40 leading-relaxed">
-                          {act.type?.includes('hunt') ? 'Nouveaux profils ajoutés à votre liste de prospection.' :
-                           act.type?.includes('message') || act.type?.includes('outreach') ? 'Le message a été transmis avec succès via LinkedIn.' :
+                          {act.type?.includes('message') || act.type?.includes('outreach') ? 'Le message a été transmis avec succès via LinkedIn.' :
                            act.type?.includes('qa') ? 'Les critères de qualité ont été vérifiés par l\'IA.' :
                            'Action de campagne effectuée avec succès.'}
                         </p>
@@ -1240,60 +1406,62 @@ export function CampaignDashboardView({
       <AnimatePresence>
         {isProspectsModalOpen && (
           <div className="fixed inset-0 z-[25] flex flex-col bg-[#050505]">
-            <motion.div 
+            <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               className="relative w-full h-full bg-[#050505] flex flex-col overflow-hidden"
-              style={{ paddingLeft: 'var(--sidebar-width, 0px)' }}
+              style={{
+                paddingLeft: 'var(--sidebar-width, 0px)',
+                transition: 'padding-left 0.24s ease-out'
+              }}
             >
-              {/* TOP HEADER */}
-              <div className="px-8 py-4 border-b border-[#1F1F1F] flex items-center justify-between shrink-0 bg-[#080808]/50 backdrop-blur-xl relative z-[100]">
-                <div className="flex items-center gap-6">
-                  <div className="flex items-center gap-3">
-                    <div className="p-2.5 rounded-xl bg-blue-500/10 text-blue-400 border border-blue-500/20">
-                      <User className="size-5" />
+              <div className="px-6 py-3 border-b border-[#1F1F1F] flex items-center justify-between shrink-0 bg-[#080808]/50 backdrop-blur-xl relative z-[100]">
+                <div className="flex items-center gap-4 min-w-0">
+                  <div className="flex items-center gap-2.5 shrink-0">
+                    <div className="p-2 rounded-xl bg-blue-500/10 text-blue-400 border border-blue-500/20 shrink-0">
+                      <User className="size-4" />
                     </div>
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <h2 className="text-lg font-bold text-white tracking-tight">Contacts</h2>
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-1.5">
+                        <h2 className="text-sm font-bold text-white tracking-tight shrink-0">Contacts</h2>
                         <span className="text-white/20 font-light">—</span>
-                        <h3 className="text-sm font-medium text-white/70">{campaignName}</h3>
-                        <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-white/5 border border-white/10 ml-1">
+                        <h3 className="text-xs font-medium text-white/60 truncate max-w-[100px] lg:max-w-[150px]">{campaignName}</h3>
+                        <div className="flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-white/5 border border-white/10 shrink-0">
                           <StatusDot status={campaign.status} />
-                          <span className="text-[9px] text-white/40 uppercase font-bold tracking-wider">{STATUS_LABEL[campaign.status]}</span>
+                          <span className="text-[8px] text-white/40 uppercase font-bold tracking-wider">{STATUS_LABEL[campaign.status]}</span>
                         </div>
                       </div>
-                      <p className="text-[10px] text-white/30 uppercase tracking-widest font-bold">{displayProspects.length} prospects</p>
+                      <p className="text-[8px] text-white/30 uppercase tracking-widest font-bold">{displayProspects.length} prospects</p>
                     </div>
                   </div>
-                  
-                  <div className="h-8 w-px bg-[#1F1F1F]" />
+
+                  <div className="h-6 w-px bg-[#1F1F1F] shrink-0" />
 
                   {/* SUB TABS */}
-                  <div className="flex items-center bg-black/40 p-1 rounded-xl border border-[#1F1F1F]">
-                    <button 
+                  <div className="flex items-center bg-black/40 p-0.5 rounded-lg border border-[#1F1F1F] shrink-0">
+                    <button
                       onClick={() => setActiveProspectTab("campaign")}
                       className={cn(
-                        "px-5 py-1.5 rounded-lg text-[11px] font-bold uppercase tracking-wider transition-all",
+                        "px-3 py-1 rounded-md text-[9px] font-bold uppercase tracking-wider transition-all",
                         activeProspectTab === "campaign" ? "bg-white/[0.06] text-white" : "text-white/40 hover:text-white"
                       )}
                     >
                       Campagne
                     </button>
-                    <button 
+                    <button
                       onClick={() => setActiveProspectTab("lists")}
                       className={cn(
-                        "px-5 py-1.5 rounded-lg text-[11px] font-bold uppercase tracking-wider transition-all",
+                        "px-3 py-1 rounded-md text-[9px] font-bold uppercase tracking-wider transition-all",
                         activeProspectTab === "lists" ? "bg-white/[0.06] text-white" : "text-white/40 hover:text-white"
                       )}
                     >
                       Listes
                     </button>
-                    <button 
+                    <button
                       onClick={() => setActiveProspectTab("all")}
                       className={cn(
-                        "px-5 py-1.5 rounded-lg text-[11px] font-bold uppercase tracking-wider transition-all",
+                        "px-3 py-1 rounded-md text-[9px] font-bold uppercase tracking-wider transition-all",
                         activeProspectTab === "all" ? "bg-white/[0.06] text-white" : "text-white/40 hover:text-white"
                       )}
                     >
@@ -1303,13 +1471,13 @@ export function CampaignDashboardView({
 
                   {activeProspectTab === "lists" && contactLists.length > 0 && (
                     <>
-                      <div className="h-8 w-px bg-[#1F1F1F]" />
-                      <div className="flex items-center gap-2 bg-black/40 px-3 py-1.5 rounded-xl border border-[#1F1F1F]">
-                        <FolderOpen className="size-3.5 text-white/30" />
-                        <select 
-                          value={selectedListId || ""} 
+                      <div className="h-6 w-px bg-[#1F1F1F] shrink-0" />
+                      <div className="flex items-center gap-1.5 bg-black/40 px-2 py-1 rounded-lg border border-[#1F1F1F] shrink-0">
+                        <FolderOpen className="size-3 text-white/30" />
+                        <select
+                          value={selectedListId || ""}
                           onChange={(e) => setSelectedListId(e.target.value)}
-                          className="bg-transparent text-[11px] font-bold text-white/70 uppercase tracking-wider focus:outline-none cursor-pointer"
+                          className="bg-transparent text-[9px] font-bold text-white/70 uppercase tracking-wider focus:outline-none cursor-pointer"
                         >
                           {contactLists.map(list => (
                             <option key={list.id} value={list.id} className="bg-[#050505]">
@@ -1320,37 +1488,35 @@ export function CampaignDashboardView({
                       </div>
                     </>
                   )}
-
-                  <div className="h-8 w-px bg-[#1F1F1F]" />
-
                 </div>
 
-                <div className="flex items-center gap-4">
-                  <div className="relative group">
-                    <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 size-4 text-white/20 group-focus-within:text-blue-400 transition-colors" />
-                    <input 
-                      type="text" 
-                      placeholder="Rechercher un prospect..." 
+                <div className="flex items-center gap-2 lg:gap-3 shrink-0">
+                  <div className="relative group min-w-0">
+                    <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 size-3 text-white/20 group-focus-within:text-blue-400 transition-colors" />
+                    <input
+                      type="text"
+                      placeholder="Rechercher..."
                       value={searchQuery}
                       onChange={(e) => setSearchQuery(e.target.value)}
-                      className="bg-black/40 border border-[#1F1F1F] rounded-xl pl-10 pr-4 py-2.5 text-sm text-white focus:outline-none focus:border-blue-500/50 focus:ring-1 focus:ring-blue-500/20 w-[240px] transition-all"
+                      className="bg-black/40 border border-[#1F1F1F] rounded-lg pl-7 pr-2 py-1.5 text-[10px] text-white focus:outline-none focus:border-blue-500/50 focus:ring-1 focus:ring-blue-500/20 w-[110px] lg:w-[150px] transition-all"
                     />
                   </div>
                   <div className="relative">
-                    <Button 
+                    <Button
                       onClick={() => setIsFilterOpen(!isFilterOpen)}
-                      variant="outline" 
+                      variant="outline"
                       className={cn(
-                        "border-[#1F1F1F] bg-black/40 text-white/60 hover:text-white gap-2 h-10 rounded-xl px-4 text-xs font-bold uppercase tracking-wider",
+                        "border-[#1F1F1F] bg-black/40 text-white/60 hover:text-white gap-1.5 h-8 rounded-lg px-2.5 text-[9px] font-bold uppercase tracking-wider shrink-0",
                         (filterStep !== "all" || filterPertinence !== "all" || filterEmail !== "all") && "text-blue-400 border-blue-500/30 bg-blue-500/5"
                       )}
                     >
-                      <Filter className="size-3.5" /> Filtres
+                      <Filter className="size-3" />
+                      <span className="hidden md:inline">Filtres</span>
                     </Button>
 
                     <AnimatePresence>
                       {isFilterOpen && (
-                        <motion.div 
+                        <motion.div
                           initial={{ opacity: 0, y: 10, scale: 0.95 }}
                           animate={{ opacity: 1, y: 0, scale: 1 }}
                           exit={{ opacity: 0, y: 10, scale: 0.95 }}
@@ -1358,7 +1524,7 @@ export function CampaignDashboardView({
                         >
                           <div className="flex items-center justify-between">
                             <h4 className="text-[10px] font-bold text-white/30 uppercase tracking-[0.2em]">Filtres Avancés</h4>
-                            <button 
+                            <button
                               onClick={() => {
                                 setFilterStep("all");
                                 setFilterPertinence("all");
@@ -1376,19 +1542,19 @@ export function CampaignDashboardView({
                             <div className="grid grid-cols-2 gap-4">
                               <div className="space-y-2">
                                 <label className="text-[10px] text-white/20 uppercase tracking-widest font-bold">Trier par</label>
-                                <select 
+                                <select
                                   value={sortBy}
                                   onChange={(e) => setSortBy(e.target.value)}
                                   className="w-full bg-white/[0.03] border border-white/10 rounded-lg px-3 py-2 text-[11px] text-white focus:outline-none focus:border-blue-500/50"
                                 >
                                   <option value="created_at">Date d'import</option>
-                                  <option value="fit_score">Pertinence</option>
+                                  <option value="pre_score">Pertinence</option>
                                   <option value="step">Step</option>
                                 </select>
                               </div>
                               <div className="space-y-2">
                                 <label className="text-[10px] text-white/20 uppercase tracking-widest font-bold">Ordre</label>
-                                <select 
+                                <select
                                   value={sortOrder}
                                   onChange={(e) => setSortOrder(e.target.value as "asc" | "desc")}
                                   className="w-full bg-white/[0.03] border border-white/10 rounded-lg px-3 py-2 text-[11px] text-white focus:outline-none focus:border-blue-500/50"
@@ -1403,7 +1569,7 @@ export function CampaignDashboardView({
 
                             <div className="space-y-2">
                               <label className="text-[10px] text-white/20 uppercase tracking-widest font-bold">Step</label>
-                              <select 
+                              <select
                                 value={filterStep}
                                 onChange={(e) => setFilterStep(e.target.value)}
                                 className="w-full bg-white/[0.03] border border-white/10 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-blue-500/50"
@@ -1418,21 +1584,21 @@ export function CampaignDashboardView({
 
                             <div className="space-y-2">
                               <label className="text-[10px] text-white/20 uppercase tracking-widest font-bold">Pertinence</label>
-                              <select 
+                              <select
                                 value={filterPertinence}
                                 onChange={(e) => setFilterPertinence(e.target.value)}
                                 className="w-full bg-white/[0.03] border border-white/10 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-blue-500/50"
                               >
-                                <option value="all">Toutes les pertinence</option>
-                                <option value="3/3">Élevée (3/3)</option>
-                                <option value="2/3">Moyenne (2/3)</option>
-                                <option value="1/3">Faible (1/3)</option>
+                                <option value="all">Toutes les pertinences</option>
+                                <option value="high">Pertinence élevée</option>
+                                <option value="medium">Pertinence moyenne</option>
+                                <option value="low">Pertinence faible</option>
                               </select>
                             </div>
 
                             <div className="space-y-2">
                               <label className="text-[10px] text-white/20 uppercase tracking-widest font-bold">Email</label>
-                              <select 
+                              <select
                                 value={filterEmail}
                                 onChange={(e) => setFilterEmail(e.target.value)}
                                 className="w-full bg-white/[0.03] border border-white/10 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-blue-500/50"
@@ -1447,29 +1613,32 @@ export function CampaignDashboardView({
                       )}
                     </AnimatePresence>
                   </div>
-                  <Button 
-                    variant="outline" 
-                    className="border-[#1F1F1F] bg-black/40 text-white/60 hover:text-white gap-2 h-10 rounded-xl px-4 text-xs font-bold uppercase tracking-wider"
+                  <Button
+                    variant="outline"
+                    className="border-[#1F1F1F] bg-black/40 text-white/60 hover:text-white gap-1.5 h-8 rounded-lg px-2.5 text-[9px] font-bold uppercase tracking-wider shrink-0"
                     onClick={() => {
                       // Logic depends on activeProspectTab
                       console.log("Exporting", activeProspectTab);
                     }}
                   >
-                    <Download className="size-3.5" /> Exporter
+                    <Download className="size-3" />
+                    <span className="hidden md:inline">Exporter</span>
                   </Button>
                   <div className="w-[1px] h-6 bg-[#1F1F1F] mx-1" />
                   <div className="relative">
-                    <Button 
+                    <Button
                       onClick={() => setIsAddLeadsOpen(!isAddLeadsOpen)}
-                      className="bg-blue-600 hover:bg-blue-500 text-white gap-2 h-10 rounded-xl px-4 text-xs font-bold uppercase tracking-wider shadow-lg shadow-blue-600/10 border-t border-blue-400/20"
+                      className="bg-blue-600 hover:bg-blue-500 text-white gap-1.5 h-8 rounded-lg px-3 text-[9px] font-bold uppercase tracking-wider shadow-lg shadow-blue-600/10 border-t border-blue-400/20 shrink-0"
                     >
-                      <Zap className="size-3.5" /> Ajouter des leads
-                      <ChevronDown className={cn("size-3.5 transition-transform", isAddLeadsOpen ? "rotate-180" : "")} />
+                      <Zap className="size-3" />
+                      <span className="hidden lg:inline">Ajouter des leads</span>
+                      <span className="lg:hidden">Ajouter</span>
+                      <ChevronDown className={cn("size-3 transition-transform", isAddLeadsOpen ? "rotate-180" : "")} />
                     </Button>
 
                     <AnimatePresence>
                       {isAddLeadsOpen && (
-                        <motion.div 
+                        <motion.div
                           initial={{ opacity: 0, y: 10, scale: 0.95 }}
                           animate={{ opacity: 1, y: 0, scale: 1 }}
                           exit={{ opacity: 0, y: 10, scale: 0.95 }}
@@ -1479,7 +1648,7 @@ export function CampaignDashboardView({
                             <div className="px-3 py-2 mb-1 border-b border-white/5">
                               <span className="text-[9px] font-bold text-white/40 uppercase tracking-[0.2em]">Source de données</span>
                             </div>
-                            <button 
+                            <button
                               onClick={() => {
                                 setIsAddLeadsOpen(false);
                                 setIsCsvModalOpen(true);
@@ -1491,7 +1660,7 @@ export function CampaignDashboardView({
                               </div>
                               Ajouter via Import CSV
                             </button>
-                            <button 
+                            <button
                               onClick={() => {
                                 setIsAddLeadsOpen(false);
                                 setIsLinkedInModalOpen(true);
@@ -1508,11 +1677,11 @@ export function CampaignDashboardView({
                       )}
                     </AnimatePresence>
                   </div>
-                  <button 
+                  <button
                     onClick={() => { toggleProspectsModal(false); setSelectedProspect(null); }}
-                    className="p-2 hover:bg-white/5 rounded-xl transition-all text-white/20 hover:text-white ml-2"
+                    className="size-8 flex items-center justify-center rounded-full bg-white/5 border border-white/10 text-white/20 hover:text-white hover:bg-white/10 hover:border-white/20 transition-all ml-2"
                   >
-                    <X className="size-6" />
+                    <X className="size-4" />
                   </button>
                 </div>
               </div>
@@ -1523,19 +1692,23 @@ export function CampaignDashboardView({
                     <thead className="bg-[#080808]/80 border-b border-[#1F1F1F] text-white/20 text-[10px] uppercase tracking-[0.2em] font-bold sticky top-0 z-30 backdrop-blur-md">
                       <tr>
                         <th className="pl-6 py-5 w-12 text-center">
-                          <input 
-                            type="checkbox" 
+                          <input
+                            type="checkbox"
                             checked={selectedIds.length > 0 && selectedIds.length === displayProspects.length}
                             onChange={toggleSelectAll}
                             className="size-4 rounded border-[#1F1F1F] bg-black/40 text-blue-500 focus:ring-blue-500/20 cursor-pointer"
                           />
                         </th>
-                        <th className="px-6 py-5 font-bold">Contact</th>
-                        <th className="px-6 py-5 font-bold text-center w-32">Pertinence</th>
-                        <th className="px-6 py-5 font-bold text-center w-32">Step</th>
-                        <th className="px-6 py-5 font-bold text-center">Date d'import</th>
-                        <th className="px-6 py-5 font-bold">Email</th>
-                        <th className="px-6 py-5 font-bold text-right"></th>
+                        <th className="px-6 py-5 font-bold min-w-[200px]">Contact</th>
+                        <th className="px-6 py-5 font-bold text-center w-32 shrink-0">Step</th>
+                        <th className="px-6 py-5 font-bold text-center w-40 shrink-0">Pré-pertinence</th>
+                        {!selectedProspect && (
+                          <>
+                            <th className="px-6 py-5 font-bold text-center w-32">Date d'import</th>
+                            <th className="px-6 py-5 font-bold">Email</th>
+                          </>
+                        )}
+                        <th className="px-6 py-5 font-bold text-right w-44"></th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-[#1F1F1F]/50">
@@ -1560,15 +1733,17 @@ export function CampaignDashboardView({
                       ) : (
                         displayProspects.map((p, i) => {
                         const isSelected = selectedIds.includes(p.id);
+                        const preScoreMeta = PRE_SCORE_META[getPreScoreLevel(p)];
+                        const isQualifying = qualifyingIds.includes(p.id);
                         return (
-                          <tr 
-                            key={`modal-${p.id}`} 
+                          <tr
+                            key={`modal-${p.id}`}
                             onClick={() => setSelectedProspect(p)}
                             className={`group cursor-pointer transition-all hover:bg-white/[0.015] ${selectedProspect?.id === p.id ? 'bg-blue-500/[0.03]' : ''} ${isSelected ? "bg-blue-500/[0.02]" : ""}`}
                           >
                             <td className="pl-6 py-5 w-12 text-center" onClick={(e) => e.stopPropagation()}>
-                              <input 
-                                type="checkbox" 
+                              <input
+                                type="checkbox"
                                 checked={isSelected}
                                 onChange={() => toggleSelectOne(p.id)}
                                 className="size-4 rounded border-[#1F1F1F] bg-black/40 text-blue-500 focus:ring-blue-500/20 cursor-pointer"
@@ -1576,18 +1751,18 @@ export function CampaignDashboardView({
                             </td>
                             <td className="px-6 py-5">
                               <div className="flex items-center gap-4">
-                                <div className="group-hover:scale-105 transition-transform duration-300">
+                                <div className="group-hover:scale-105 transition-transform duration-300 shrink-0">
                                   <ProspectAvatar name={p.decision_maker || p.company_name} photoUrl={p.photo_url} colorIndex={i} />
                                 </div>
-                                <div className="min-w-0">
+                                <div className="min-w-0 flex-1">
                                   <div className="flex items-center gap-1.5 mb-0.5">
                                     <p className="font-bold text-[15px] text-white/90 truncate group-hover:text-white transition-colors">
-                                      {p.decision_maker ? (p.decision_maker.split(/[,|•-]/)[0].trim()) : "Inconnu"}
+                                      {p.decision_maker ? (p.decision_maker.split(/[,|•]/)[0].split(/\s-\s/)[0].trim()) : "Inconnu"}
                                     </p>
                                     {p.linkedin_url && (
-                                      <a 
-                                        href={p.linkedin_url} 
-                                        target="_blank" 
+                                      <a
+                                        href={p.linkedin_url}
+                                        target="_blank"
                                         rel="noopener noreferrer"
                                         onClick={(e) => e.stopPropagation()}
                                         className="text-white/20 hover:text-[#0077b5] transition-all hover:scale-110 active:scale-95"
@@ -1596,58 +1771,82 @@ export function CampaignDashboardView({
                                       </a>
                                     )}
                                   </div>
-                                  <p className="text-[11px] text-white/40 font-medium">
-                                    {p.role || "Décideur"} {p.company_name && `@ ${p.company_name}`}
-                                  </p>
+                                  {(() => {
+                                    const { title, company } = getTitleAndCompany(p.role, p.company_name);
+                                    return (
+                                      <div className="flex flex-col mt-0.5">
+                                        <p className="text-[11px] text-white/60 font-medium leading-tight truncate">
+                                          {title}
+                                        </p>
+                                        {company && (
+                                          <p className="text-[10px] text-white/30 font-medium leading-tight mt-0.5 truncate">
+                                            @ {company}
+                                          </p>
+                                        )}
+                                      </div>
+                                    );
+                                  })()}
                                 </div>
                               </div>
                             </td>
-                            <td className="px-6 py-5 text-center w-32">
-                              <span className={cn(
-                                "px-2.5 py-1 rounded-md text-[10px] font-bold border inline-block w-12",
-                                (p.fit_score || 0) >= 80 ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20" :
-                                (p.fit_score || 0) >= 50 ? "bg-orange-500/10 text-orange-400 border-orange-500/20" :
-                                "bg-red-500/10 text-red-400 border-red-500/20"
-                              )}>
-                                {(p.fit_score || 0) >= 80 ? '3/3' : (p.fit_score || 0) >= 50 ? '2/3' : '1/3'}
-                              </span>
-                            </td>
-                            <td className="px-6 py-5 text-center w-32">
+                            <td className="px-6 py-5 text-center w-32 shrink-0">
                               <span className={cn(
                                 "px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider border inline-block w-20",
-                                p.status === 'converted' 
+                                p.status === 'converted'
                                   ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
                                   : "bg-blue-500/10 text-blue-400 border-blue-500/20"
                               )}>
                                 {getStepLabel(p.status)}
                               </span>
                             </td>
-                            <td className="px-6 py-5 text-center text-[11px] text-white/70 font-bold uppercase tracking-wider">
-                              {p.created_at ? new Date(p.created_at).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' }) : "—"}
+                            <td className="px-6 py-5 text-center w-40 shrink-0">
+                              <span className={cn(
+                                "px-3 py-1 rounded-md text-[10px] font-bold border inline-block min-w-[92px]",
+                                preScoreMeta.className
+                              )}>
+                                {preScoreMeta.shortLabel}
+                              </span>
                             </td>
-                            <td className="px-6 py-5">
-                              <div className="flex items-center gap-3">
-                                {p.email ? (
-                                  <div className="flex items-center gap-2">
-                                    <div className="p-1.5 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-500">
-                                      <Mail className="size-3.5" />
-                                    </div>
-                                    <span className="text-[12px] text-white/50 font-medium lowercase truncate max-w-[150px]">
-                                      {p.email}
-                                    </span>
+                            {!selectedProspect && (
+                              <>
+                                <td className="px-6 py-5 text-center text-[11px] text-white/70 font-bold uppercase tracking-wider w-32">
+                                  {p.created_at ? new Date(p.created_at).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' }) : "—"}
+                                </td>
+                                <td className="px-6 py-5">
+                                  <div className="flex items-center gap-3">
+                                    {p.email ? (
+                                      <div className="flex items-center gap-2">
+                                        <div className="p-1.5 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-500">
+                                          <Mail className="size-3.5" />
+                                        </div>
+                                        <span className="text-[12px] text-white/50 font-medium lowercase truncate max-w-[150px]">
+                                          {p.email}
+                                        </span>
+                                      </div>
+                                    ) : (
+                                      <span className="text-[11px] text-white/20 font-bold uppercase tracking-widest">Not Found</span>
+                                    )}
                                   </div>
-                                ) : (
-                                  <span className="text-[11px] text-white/20 font-bold uppercase tracking-widest">Not Found</span>
-                                )}
+                                </td>
+                              </>
+                            )}
+                            <td className="px-6 py-4 text-right w-44">
+                              <div className="flex items-center justify-end gap-2">
+                                <Button
+                                  onClick={(e) => { e.stopPropagation(); handleQualify([p.id]); }}
+                                  disabled={isQualifying}
+                                  className="h-8 px-3 rounded-lg bg-white/10 hover:bg-white/15 text-white border border-white/10 text-[11px] font-bold gap-2 shrink-0"
+                                >
+                                  {isQualifying ? <Loader2 className="size-3.5 animate-spin" /> : <CheckCircle2 className="size-3.5" />}
+                                  Qualifier
+                                </Button>
+                                <button
+                                  onClick={(e) => { e.stopPropagation(); setSelectedProspect(p); }}
+                                  className="size-8 flex items-center justify-center hover:bg-white/5 rounded-lg text-white/20 hover:text-white transition-all group/btn shrink-0"
+                                >
+                                  <Plus className="size-4 group-hover/btn:rotate-90 transition-transform duration-300" />
+                                </button>
                               </div>
-                            </td>
-                            <td className="px-6 py-5 text-right">
-                              <button 
-                                onClick={(e) => { e.stopPropagation(); setSelectedProspect(p); }}
-                                className="p-2.5 hover:bg-white/5 rounded-xl text-white/20 hover:text-white transition-all group/btn"
-                              >
-                                <Plus className="size-5 group-hover/btn:rotate-90 transition-transform duration-300" />
-                              </button>
                             </td>
                           </tr>
                         )
@@ -1659,14 +1858,17 @@ export function CampaignDashboardView({
                 </div>
 
                 {selectedProspect && (
-                  <div className="w-full lg:w-[450px] xl:w-[500px] bg-[#080808] border-l border-[#1F1F1F] overflow-y-auto flex flex-col shrink-0">
-                    <div className="p-6 border-b border-[#1F1F1F] flex items-center justify-between sticky top-0 bg-[#080808]/90 backdrop-blur z-10">
-                      <h3 className="text-xl font-bold">Détails Prospect</h3>
-                      <button onClick={() => setSelectedProspect(null)} className="p-2 hover:bg-white/10 rounded-xl transition-colors">
-                        <X className="size-5 text-white/40" />
+                  <div className="w-full lg:w-[450px] xl:w-[500px] bg-[#080808] border-l border-[#1F1F1F] flex flex-col shrink-0">
+                    <div className="p-6 border-b border-[#1F1F1F] flex items-center justify-between bg-[#080808] z-10 shrink-0">
+                      <h3 className="text-xl font-bold tracking-tight">Détails Prospect</h3>
+                      <button
+                        onClick={() => setSelectedProspect(null)}
+                        className="size-8 flex items-center justify-center rounded-full bg-white/5 border border-white/10 text-white/40 hover:bg-white/10 hover:text-white transition-all shadow-lg"
+                      >
+                        <X className="size-4" />
                       </button>
                     </div>
-                    <div className="p-8 space-y-8">
+                    <div className="flex-1 overflow-y-auto p-8 space-y-8 scrollbar-hide">
                       <div className="flex flex-col items-center text-center gap-4">
                         <div className="size-24 rounded-2xl bg-white/[0.03] flex items-center justify-center overflow-hidden border border-[#1F1F1F] shrink-0 shadow-2xl">
                           {selectedProspect.photo_url ? (
@@ -1677,21 +1879,63 @@ export function CampaignDashboardView({
                         </div>
                         <div>
                           <h2 className="text-2xl font-bold text-white tracking-tight">{selectedProspect.decision_maker || "Inconnu"}</h2>
-                          <p className="text-white/60 font-medium text-lg mt-1">{selectedProspect.role || "Décideur"}</p>
-                          <p className="text-white/30 mt-1">{selectedProspect.company_name}</p>
+                          {(() => {
+                            const { title, company } = getTitleAndCompany(selectedProspect.role, selectedProspect.company_name);
+                            return (
+                              <div className="flex flex-col items-center mt-2">
+                                <p className="text-white/60 font-medium text-lg">
+                                  {title}
+                                </p>
+                                {company && (
+                                  <p className="text-white/30 text-base mt-1">
+                                    @ {company}
+                                  </p>
+                                )}
+                              </div>
+                            );
+                          })()}
                         </div>
                       </div>
 
                       <div className="grid grid-cols-2 gap-4">
                         <div className="p-5 rounded-xl bg-white/[0.03] border border-[#1F1F1F] flex flex-col items-center justify-center text-center">
-                          <p className="text-[10px] text-white/20 uppercase tracking-[0.2em] font-bold mb-1.5">Score ICP</p>
-                          <p className="text-2xl font-bold text-emerald-400">{selectedProspect.fit_score || 0}%</p>
+                          <p className="text-[10px] text-white/20 uppercase tracking-[0.2em] font-bold mb-1.5">Pré-pertinence</p>
+                          <span className={cn(
+                            "px-3 py-1.5 rounded-md text-[11px] font-bold border",
+                            PRE_SCORE_META[getPreScoreLevel(selectedProspect)].className
+                          )}>
+                            {PRE_SCORE_META[getPreScoreLevel(selectedProspect)].label}
+                          </span>
                         </div>
                         <div className="p-5 rounded-xl bg-white/[0.03] border border-[#1F1F1F] flex flex-col items-center justify-center text-center">
-                          <p className="text-[10px] text-white/20 uppercase tracking-[0.2em] font-bold mb-1.5">Step</p>
-                          <p className="text-xs font-bold text-white uppercase tracking-wider mt-1 px-3 py-1 rounded-full bg-blue-500/10 border border-blue-500/20">
-                            {getStepLabel(selectedProspect.status)}
-                          </p>
+                          <p className="text-[10px] text-white/20 uppercase tracking-[0.2em] font-bold mb-1.5">Qualification finale</p>
+                          <span className={cn(
+                            "px-3 py-1.5 rounded-md text-[11px] font-bold border",
+                            getQualificationMeta(selectedProspect).className
+                          )}>
+                            {getQualificationMeta(selectedProspect).label}
+                          </span>
+                        </div>
+                      </div>
+
+
+                      <div className="space-y-4">
+                        <h4 className="text-[10px] font-bold text-white/20 uppercase tracking-[0.2em] flex items-center gap-2 px-1">
+                          <CheckCircle2 className="size-3" /> Qualification
+                        </h4>
+                        <div className="p-6 rounded-xl bg-white/[0.03] border border-[#1F1F1F] space-y-5">
+                          <div className="space-y-2">
+                            <p className="text-[10px] text-white/20 uppercase tracking-widest font-bold">Raison</p>
+                            <p className="text-[13px] text-white/60 leading-relaxed">
+                              {selectedProspect.qualification_reason || "Aucune qualification LLM lancée pour le moment."}
+                            </p>
+                          </div>
+                          <div className="space-y-2">
+                            <p className="text-[10px] text-white/20 uppercase tracking-widest font-bold">Message suggéré</p>
+                            <p className="text-[13px] text-white/70 leading-relaxed whitespace-pre-wrap">
+                              {selectedProspect.suggested_message || "Le message sera généré après qualification."}
+                            </p>
+                          </div>
                         </div>
                       </div>
 
@@ -1741,6 +1985,13 @@ export function CampaignDashboardView({
                               </div>
                             </div>
                             <div className="space-y-1.5">
+                              <p className="text-[10px] text-white/20 uppercase tracking-widest font-bold">Source</p>
+                              <div className="flex items-center gap-2 text-[13px] text-white/70">
+                                <Search className="size-3.5 text-white/20 shrink-0" />
+                                <span className="truncate">{selectedProspect.source || "N/A"}</span>
+                              </div>
+                            </div>
+                            <div className="space-y-1.5">
                               <p className="text-[10px] text-white/20 uppercase tracking-widest font-bold">Website</p>
                               <div className="flex items-center gap-2 text-[13px] text-white/70 overflow-hidden">
                                 <Globe className="size-3.5 text-white/20 shrink-0" />
@@ -1749,8 +2000,35 @@ export function CampaignDashboardView({
                                 ) : "N/A"}
                               </div>
                             </div>
+                            <div className="space-y-1.5">
+                              <p className="text-[10px] text-white/20 uppercase tracking-widest font-bold">Importé le</p>
+                              <div className="flex items-center gap-2 text-[13px] text-white/70">
+                                <Clock className="size-3.5 text-white/20 shrink-0" />
+                                <span>{selectedProspect.created_at ? new Date(selectedProspect.created_at).toLocaleDateString('fr-FR', { day: '2-digit', month: 'long', year: 'numeric' }) : "—"}</span>
+                              </div>
+                            </div>
                           </div>
-                          
+                          <div className="pt-5 border-t border-white/5 grid grid-cols-1 sm:grid-cols-2 gap-4">
+                            <div className="space-y-1.5 overflow-hidden">
+                              <p className="text-[10px] text-white/20 uppercase tracking-widest font-bold">Email détecté</p>
+                              <div className="flex items-center gap-2 text-[13px] text-white/70 overflow-hidden">
+                                <Mail className="size-3.5 text-white/20 shrink-0" />
+                                {selectedProspect.email ? (
+                                  <a href={`mailto:${selectedProspect.email}`} className="text-blue-400 hover:text-blue-300 transition-colors truncate">{selectedProspect.email}</a>
+                                ) : "N/A"}
+                              </div>
+                            </div>
+                            <div className="space-y-1.5 overflow-hidden">
+                              <p className="text-[10px] text-white/20 uppercase tracking-widest font-bold">Téléphone détecté</p>
+                              <div className="flex items-center gap-2 text-[13px] text-white/70 overflow-hidden">
+                                <Phone className="size-3.5 text-white/20 shrink-0" />
+                                {selectedProspect.phone ? (
+                                  <a href={`tel:${selectedProspect.phone}`} className="text-blue-400 hover:text-blue-300 transition-colors truncate">{selectedProspect.phone}</a>
+                                ) : "N/A"}
+                              </div>
+                            </div>
+                          </div>
+
                           <div className="pt-5 border-t border-white/5 space-y-2 overflow-hidden">
                             <p className="text-[10px] text-white/20 uppercase tracking-widest font-bold">Company LinkedIn</p>
                             <div className="flex items-center gap-2 text-[13px] text-white/70">
@@ -1770,10 +2048,26 @@ export function CampaignDashboardView({
                         <h4 className="text-[10px] font-bold text-white/20 uppercase tracking-[0.2em] px-1">Description</h4>
                         <div className="p-6 rounded-xl bg-white/[0.03] border border-[#1F1F1F]">
                           <p className="text-[13px] text-white/50 leading-relaxed italic">
-                            {selectedProspect.company?.description ? `"${selectedProspect.company.description}"` : "Aucune description disponible."}
+                            {selectedProspect.company_description || selectedProspect.company?.description ? `"${selectedProspect.company_description || selectedProspect.company?.description}"` : "Aucune description disponible."}
                           </p>
                         </div>
                       </div>
+                    </div>
+
+                    {/* Sticky Footer Action */}
+                    <div className="p-6 border-t border-[#1F1F1F] bg-[#080808]/80 backdrop-blur-xl shrink-0">
+                      <Button
+                        onClick={() => handleQualify([selectedProspect.id])}
+                        disabled={qualifyingIds.includes(selectedProspect.id)}
+                        className="w-full h-12 rounded-xl bg-blue-600 hover:bg-blue-500 text-white gap-3 font-bold text-base shadow-[0_0_20px_rgba(37,99,235,0.2)] transition-all active:scale-95"
+                      >
+                        {qualifyingIds.includes(selectedProspect.id) ? (
+                          <Loader2 className="size-5 animate-spin" />
+                        ) : (
+                          <CheckCircle2 className="size-5" />
+                        )}
+                        Qualifier le prospect
+                      </Button>
                     </div>
                   </div>
                 )}
@@ -1783,9 +2077,9 @@ export function CampaignDashboardView({
         )}
 
         {isFlowModalOpen && (
-          <SequenceBuilderModal 
-            onClose={() => toggleFlowModal(false)} 
-            initialSteps={sequenceSteps || []} 
+          <SequenceBuilderModal
+            onClose={() => toggleFlowModal(false)}
+            initialSteps={sequenceSteps || []}
             onSave={async (steps) => {
               const { saveSequenceSteps } = await import("@/lib/flows/actions");
               await saveSequenceSteps(campaign.id, steps);
@@ -1794,9 +2088,9 @@ export function CampaignDashboardView({
           />
         )}
         {isSettingsOpen && (
-          <SettingsModal 
-            onClose={() => toggleSettingsModal(false)} 
-            campaignName={campaignName} 
+          <SettingsModal
+            onClose={() => toggleSettingsModal(false)}
+            campaignName={campaignName}
             campaign={campaign}
           />
         )}
@@ -1806,9 +2100,9 @@ export function CampaignDashboardView({
       {/* FLOATING ACTION BAR */}
       <AnimatePresence>
         {selectedIds.length > 0 && (
-          <motion.div 
-            initial={{ y: 20, opacity: 0 }} 
-            animate={{ y: 0, opacity: 1 }} 
+          <motion.div
+            initial={{ y: 20, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
             exit={{ y: 20, opacity: 0 }}
             className="fixed bottom-8 left-1/2 -translate-x-1/2 z-[200] bg-[#0A0A0A] border border-white/10 rounded-2xl p-4 shadow-[0_30px_100px_rgba(0,0,0,0.8)] flex items-center gap-6 min-w-[400px]"
           >
@@ -1819,17 +2113,25 @@ export function CampaignDashboardView({
               <span className="text-sm font-medium text-white/60">contacts sélectionnés</span>
             </div>
             <div className="flex items-center gap-3">
-              <Button 
-                onClick={() => handleDelete(selectedIds)} 
+              <Button
+                onClick={() => handleQualify(selectedIds)}
+                disabled={selectedIds.some((id) => qualifyingIds.includes(id))}
+                className="bg-blue-600 hover:bg-blue-500 text-white border border-blue-400/20 gap-2 h-10 px-4"
+              >
+                {selectedIds.some((id) => qualifyingIds.includes(id)) ? <Loader2 className="size-4 animate-spin" /> : <CheckCircle2 className="size-4" />}
+                Qualifier la sélection
+              </Button>
+              <Button
+                onClick={() => handleDelete(selectedIds)}
                 disabled={isDeleting}
-                variant="destructive" 
+                variant="destructive"
                 className="bg-red-500/10 hover:bg-red-500 text-red-500 hover:text-white border border-red-500/20 gap-2 h-10 px-4"
               >
                 {isDeleting ? <Loader2 className="size-4 animate-spin" /> : <Trash2 className="size-4" />}
                 Supprimer la sélection
               </Button>
-              <Button 
-                variant="ghost" 
+              <Button
+                variant="ghost"
                 onClick={() => setSelectedIds([])}
                 className="text-white/40 hover:text-white h-10 px-4"
               >
@@ -1840,9 +2142,9 @@ export function CampaignDashboardView({
         )}
       </AnimatePresence>
 
-      <LinkedInExtensionModal 
-        isOpen={isLinkedInModalOpen} 
-        onClose={() => setIsLinkedInModalOpen(false)} 
+      <LinkedInExtensionModal
+        isOpen={isLinkedInModalOpen}
+        onClose={() => setIsLinkedInModalOpen(false)}
       />
     </div>
   );
@@ -1850,7 +2152,7 @@ export function CampaignDashboardView({
 
 function LinkedInExtensionModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) {
   const router = useRouter();
-  
+
   return (
     <AnimatePresence>
       {isOpen && (
@@ -1909,14 +2211,14 @@ function LinkedInExtensionModal({ isOpen, onClose }: { isOpen: boolean; onClose:
               </div>
 
               <div className="grid grid-cols-2 gap-4">
-                <Button 
+                <Button
                   onClick={() => router.push('/integrations')}
-                  variant="outline" 
+                  variant="outline"
                   className="h-12 rounded-2xl border-white/10 bg-white/5 text-white hover:bg-white/10 font-bold gap-2"
                 >
                   <Settings className="size-4" /> Voir l'Intégration
                 </Button>
-                <Button 
+                <Button
                   onClick={() => window.open('https://linkedin.com', '_blank')}
                   className="h-12 rounded-2xl bg-[#0077b5] hover:bg-[#0077b5]/90 text-white font-bold gap-2"
                 >

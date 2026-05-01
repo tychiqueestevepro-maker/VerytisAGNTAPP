@@ -30,6 +30,8 @@ export async function POST(request: Request) {
       .from('campaigns')
       .insert({
         flow_id: flow.id,
+        organization_id: clientId,
+        name: displayName,
         display_name: displayName,
         status: 'active',
         config: {}

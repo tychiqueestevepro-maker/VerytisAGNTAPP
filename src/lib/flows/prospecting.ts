@@ -38,7 +38,7 @@ export async function getProspectingData(campaignId?: string) {
   // 3. Fetch prospects (scoped to campaign_id if provided)
   let prospectsQuery = supabase
     .from("prospects")
-    .select("id, company_name, decision_maker, role, fit_score, status, priority")
+    .select("id, campaign_id, company_name, decision_maker, role, fit_score, status, priority, pre_score, pre_score_level, qualification_status, qualification_level")
     .eq("client_id", user.profile.client_id)
     .order("created_at", { ascending: false })
     .limit(50);

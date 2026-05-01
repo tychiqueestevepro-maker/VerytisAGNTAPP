@@ -42,6 +42,7 @@ export default async function CampaignDetailPage({ params }: Props) {
     .from("prospects")
     .select(`
       id, 
+      campaign_id,
       company_name, 
       decision_maker, 
       role, 
@@ -52,7 +53,23 @@ export default async function CampaignDetailPage({ params }: Props) {
       website,
       location,
       linkedin_url,
+      email,
+      phone,
+      source,
       extra_data,
+      created_at,
+      full_name,
+      role_title,
+      company_description,
+      profile_url,
+      website_url,
+      raw_data,
+      pre_score,
+      pre_score_level,
+      qualification_status,
+      qualification_level,
+      qualification_reason,
+      suggested_message,
       company:companies (
         industry,
         size_range,
@@ -64,7 +81,7 @@ export default async function CampaignDetailPage({ params }: Props) {
     .eq("client_id", user.profile.client_id)
     .eq("campaign_id", id)
     .order("created_at", { ascending: false })
-    .limit(50);
+    .limit(1000);
 
   // Load recent activity
   const { data: activities } = await supabase
@@ -82,8 +99,6 @@ export default async function CampaignDetailPage({ params }: Props) {
     .limit(10);
 
   const activityMap: Record<string, string> = {
-    'hunter': 'Import de nouveaux prospects',
-    'hunt': 'Analyse des profils terminée',
     'qualifier': 'Qualification ICP effectuée',
     'copywriter': 'Message prêt pour envoi',
     'message_generation': 'Message prêt pour envoi',
@@ -97,7 +112,7 @@ export default async function CampaignDetailPage({ params }: Props) {
     'enrichment': 'Données prospect complétées'
   };
 
-  const excludedTypes = ['enrichment', 'qualifier', 'hunt', 'message_generation', 'copywriter'];
+  const excludedTypes = ['enrichment', 'qualifier', 'message_generation', 'copywriter'];
 
   const mappedActivities = (activities ?? [])
     .filter(act => !excludedTypes.includes(act.action))
@@ -122,7 +137,7 @@ export default async function CampaignDetailPage({ params }: Props) {
 
   const mappedProspects = (prospects ?? []).map(p => ({
     ...p,
-    company: p.company?.[0] || null
+    company: Array.isArray(p.company) ? p.company[0] || null : p.company || null
   }));
 
   return (

@@ -17,8 +17,18 @@ export async function GET(request: Request) {
       .from('campaigns')
       .select(`
         id, 
+        organization_id,
+        name,
         display_name, 
         description,
+        objective,
+        target_description,
+        target_roles,
+        target_industries,
+        target_locations,
+        target_company_size,
+        tone,
+        source,
         config,
         status, 
         flow_id,

@@ -227,7 +227,13 @@ export function SequenceBuilderModal({ initialSteps, onClose, onSave }: Sequence
   computeStepIndices(steps);
 
   return (
-    <div className="fixed inset-0 z-[100] flex bg-black/90 backdrop-blur-sm overflow-hidden">
+    <div 
+      className="fixed inset-0 z-[25] flex bg-black/90 backdrop-blur-sm overflow-hidden"
+      style={{ 
+        paddingLeft: 'var(--sidebar-width, 0px)',
+        transition: 'padding-left 0.24s ease-out'
+      }}
+    >
       {/* Sidebar for Action Addition / Sequence Overview */}
       <div className="w-80 bg-[#050505] border-r border-white/10 flex flex-col shrink-0 relative z-10">
         <div className="p-5 border-b border-white/10 flex items-center justify-between">

@@ -2,10 +2,20 @@
 
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getUserWithProfile } from "@/lib/auth";
+import { preScoreProspect } from "@/lib/prospecting/scoring";
+
+type CsvProspect = Record<string, unknown>;
+
+function field(row: CsvProspect, key: string): string | null {
+  const value = row[key];
+  if (typeof value === "string") return value.trim() || null;
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  return null;
+}
 
 export async function importProspectsCSV(
   campaignId: string,
-  prospects: any[]
+  prospects: CsvProspect[]
 ) {
   const user = await getUserWithProfile();
   if (!user?.profile?.client_id) return { success: false, error: "Non authentifié" };
@@ -13,34 +23,69 @@ export async function importProspectsCSV(
   const supabase = await createSupabaseServerClient();
   const clientId = user.profile.client_id;
 
+  const { data: campaign } = await supabase
+    .from("campaigns")
+    .select("*")
+    .eq("id", campaignId)
+    .single();
+
   // Transform data
-  const validProspects = prospects.map((p: any) => {
+  const validProspects = prospects.map((p) => {
     // Generate full name
     let decisionMaker = "";
-    if (p.firstName && p.lastName) decisionMaker = `${p.firstName} ${p.lastName}`;
-    else if (p.firstName) decisionMaker = p.firstName;
-    else if (p.lastName) decisionMaker = p.lastName;
-    else if (p.fullName) decisionMaker = p.fullName;
+    const firstName = field(p, "firstName");
+    const lastName = field(p, "lastName");
+    if (firstName && lastName) decisionMaker = `${firstName} ${lastName}`;
+    else if (firstName) decisionMaker = firstName;
+    else if (lastName) decisionMaker = lastName;
+    else decisionMaker = field(p, "fullName") || "";
     
     // Collect extra standard variables
-    const extraData: any = {};
+    const extraData: Record<string, unknown> = {};
     if (p.icebreaker) extraData.icebreaker = p.icebreaker;
-    if (p.customVariables) Object.assign(extraData, p.customVariables);
+    if (p.customVariables && typeof p.customVariables === "object" && !Array.isArray(p.customVariables)) {
+      Object.assign(extraData, p.customVariables);
+    }
+    extraData.raw_data = p;
 
-    return {
+    const companyName = field(p, "companyName") || field(p, "company") || field(p, "companyDomain");
+    const website = field(p, "website") || field(p, "companyWebsite") || field(p, "companyDomain");
+    const role = field(p, "jobTitle") || field(p, "role") || field(p, "title");
+    const location = field(p, "location") || field(p, "city") || field(p, "country");
+    const companyDescription = field(p, "companyDescription") || field(p, "company_description") || field(p, "description");
+    const linkedinUrl = field(p, "linkedInURL") || field(p, "linkedin_url") || field(p, "profile_url");
+
+    const baseProspect = {
       client_id: clientId,
       campaign_id: campaignId,
-      email: p.email || null,
-      company_name: p.companyName || p.companyDomain || null,
-      website: p.companyDomain || null,
+      email: field(p, "email"),
+      company_name: companyName,
+      website,
       decision_maker: decisionMaker || null,
-      role: p.jobTitle || null,
-      linkedin_url: p.linkedInURL || null,
-      phone: p.phone || null,
+      role,
+      linkedin_url: linkedinUrl,
+      phone: field(p, "phone"),
+      location,
       status: "discovered",
       priority: "medium",
       source: "csv_import",
+      full_name: decisionMaker || null,
+      role_title: role,
+      company_description: companyDescription,
+      profile_url: linkedinUrl,
+      website_url: website,
+      raw_data: p,
       extra_data: extraData
+    };
+
+    const preScore = campaign ? preScoreProspect(baseProspect, campaign) : null;
+
+    return {
+      ...baseProspect,
+      fit_score: preScore?.score ?? null,
+      pre_score: preScore?.score ?? null,
+      pre_score_level: preScore?.level ?? null,
+      qualification_status: preScore ? "pre_scored" : "collected",
     };
   });
 

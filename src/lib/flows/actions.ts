@@ -4,6 +4,42 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getUserWithProfile } from "@/lib/auth";
 import { ClientFlow, Campaign, CampaignStatus, WorkflowStepWithAgent } from "@/types/flows";
 import { revalidatePath } from "next/cache";
+import {
+  getOpenAIKeyForClient,
+  qualifyProspectWithLLM,
+} from "@/lib/prospecting/qualification";
+import { preScoreProspect } from "@/lib/prospecting/scoring";
+
+type ProspectingCampaignConfig = {
+  target_icp?: {
+    sectors?: string[];
+    industries?: string[];
+    company_size?: string[];
+    company_sizes?: string[];
+    locations?: string[];
+    geographies?: string[];
+  };
+  personas?: string[];
+  tone?: string;
+  sources?: string[];
+  source?: string;
+  offer?: string;
+  target_description?: string;
+  prospection?: {
+    mode?: string;
+    prospects_per_day?: number;
+    search_time?: string;
+    sector?: string;
+    location?: string;
+    decision_maker?: string;
+  };
+  injection?: {
+    auto_add?: boolean;
+    ignore_duplicates?: boolean;
+    prioritize_linkedin?: boolean;
+  };
+  [key: string]: unknown;
+};
 
 // ---------------------------------------------------------------------------
 // GET: All flows for the current client
@@ -206,7 +242,7 @@ export async function updateCampaignConfig(
 // ---------------------------------------------------------------------------
 export async function createProspectingCampaign(
   displayName: string,
-  initialConfig?: Record<string, any>
+  initialConfig?: ProspectingCampaignConfig
 ): Promise<{ data: Campaign | null; error: string | null }> {
   const user = await getUserWithProfile();
   if (!user || !user.profile?.client_id) return { data: null, error: "Non authentifié" };
@@ -239,7 +275,7 @@ export async function createProspectingCampaign(
 
   if (!flow) return { data: null, error: "Flux parent introuvable" };
 
-  const defaultConfig = {
+  const defaultConfig: ProspectingCampaignConfig = {
     target_icp: { sectors: [], company_size: [], locations: [] },
     personas: [],
     tone: "",
@@ -263,7 +299,17 @@ export async function createProspectingCampaign(
     .from("campaigns")
     .insert({
       flow_id: flow.id,
+      organization_id: user.profile.client_id,
+      name: displayName,
       display_name: displayName,
+      objective: defaultConfig.offer || null,
+      target_description: defaultConfig.target_description || defaultConfig.offer || null,
+      target_roles: defaultConfig.personas || [],
+      target_industries: defaultConfig.target_icp?.sectors || defaultConfig.target_icp?.industries || [],
+      target_locations: defaultConfig.target_icp?.locations || defaultConfig.target_icp?.geographies || [],
+      target_company_size: defaultConfig.target_icp?.company_size || defaultConfig.target_icp?.company_sizes || [],
+      tone: defaultConfig.tone || null,
+      source: Array.isArray(defaultConfig.sources) ? defaultConfig.sources[0] : defaultConfig.source || null,
       status: "active",
       config: defaultConfig,
     })
@@ -375,6 +421,189 @@ export async function deleteProspects(ids: string[]): Promise<{ success: boolean
   return { success: true };
 }
 
+async function qualifyProspectRecord(
+  supabase: any,
+  clientId: string,
+  prospectId: string,
+  apiKey: string
+) {
+  const { data: prospect, error: prospectError } = await supabase
+    .from("prospects")
+    .select(`
+      *,
+      company:companies (
+        industry,
+        size_range,
+        description,
+        linkedin_url,
+        location
+      )
+    `)
+    .eq("id", prospectId)
+    .eq("client_id", clientId)
+    .single();
+
+  if (prospectError || !prospect) {
+    throw new Error("Prospect introuvable");
+  }
+
+  if (!prospect.campaign_id) {
+    throw new Error("Ce prospect n'est rattaché à aucune campagne");
+  }
+
+  const { data: campaign, error: campaignError } = await supabase
+    .from("campaigns")
+    .select("*")
+    .eq("id", prospect.campaign_id)
+    .single();
+
+  if (campaignError || !campaign) {
+    throw new Error("Campagne introuvable");
+  }
+
+  const preScore = preScoreProspect(prospect, campaign);
+  const qualification = await qualifyProspectWithLLM(
+    {
+      ...prospect,
+      pre_score: preScore.score,
+      pre_score_level: preScore.level,
+    },
+    campaign,
+    apiKey
+  );
+
+  const finalQualificationStatus = qualification.qualification_level === "low" ? "rejected" : "qualified";
+
+  const { data: updated, error: updateError } = await supabase
+    .from("prospects")
+    .update({
+      full_name: prospect.full_name || prospect.decision_maker,
+      role_title: prospect.role_title || prospect.role,
+      company_description: prospect.company_description || prospect.company?.description || prospect.extra_data?.about || null,
+      profile_url: prospect.profile_url || prospect.linkedin_url,
+      website_url: prospect.website_url || prospect.website,
+      raw_data: prospect.raw_data && Object.keys(prospect.raw_data).length > 0 ? prospect.raw_data : prospect.extra_data || {},
+      pre_score: preScore.score,
+      pre_score_level: preScore.level,
+      fit_score: preScore.score,
+      qualification_status: finalQualificationStatus,
+      qualification_level: qualification.qualification_level,
+      qualification_reason: qualification.qualification_reason,
+      suggested_message: qualification.suggested_message,
+      status: finalQualificationStatus,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", prospectId)
+    .eq("client_id", clientId)
+    .select(`
+      id,
+      campaign_id,
+      company_name,
+      decision_maker,
+      role,
+      fit_score,
+      status,
+      priority,
+      photo_url,
+      website,
+      location,
+      linkedin_url,
+      email,
+      phone,
+      source,
+      extra_data,
+      created_at,
+      full_name,
+      role_title,
+      company_description,
+      profile_url,
+      website_url,
+      raw_data,
+      pre_score,
+      pre_score_level,
+      qualification_status,
+      qualification_level,
+      qualification_reason,
+      suggested_message,
+      company:companies (
+        industry,
+        size_range,
+        description,
+        linkedin_url,
+        location
+      )
+    `)
+    .single();
+
+  if (updateError || !updated) {
+    throw new Error("Impossible d'enregistrer la qualification");
+  }
+
+  return updated;
+}
+
+export async function qualifyProspect(prospectId: string): Promise<{ data: any | null; error: string | null }> {
+  const user = await getUserWithProfile();
+  if (!user || !user.profile?.client_id) return { data: null, error: "Non authentifié" };
+
+  try {
+    const apiKey = await getOpenAIKeyForClient(user.profile.client_id);
+    const supabase = await createSupabaseServerClient();
+    const data = await qualifyProspectRecord(supabase, user.profile.client_id, prospectId, apiKey);
+
+    revalidatePath("/flows/prospecting");
+    if (data.campaign_id) revalidatePath(`/flows/prospecting/${data.campaign_id}`);
+
+    return { data, error: null };
+  } catch (error: any) {
+    return { data: null, error: error.message || "Erreur lors de la qualification" };
+  }
+}
+
+export async function qualifyProspects(prospectIds: string[]): Promise<{
+  data: any[];
+  errors: { id: string; error: string }[];
+  success: boolean;
+}> {
+  const user = await getUserWithProfile();
+  if (!user || !user.profile?.client_id) {
+    return { data: [], errors: prospectIds.map((id) => ({ id, error: "Non authentifié" })), success: false };
+  }
+
+  const ids = Array.from(new Set(prospectIds)).filter(Boolean);
+  if (ids.length === 0) return { data: [], errors: [], success: false };
+
+  const supabase = await createSupabaseServerClient();
+  let apiKey: string;
+  try {
+    apiKey = await getOpenAIKeyForClient(user.profile.client_id);
+  } catch (error: any) {
+    return {
+      data: [],
+      errors: ids.map((id) => ({ id, error: error.message || "Clé OpenAI introuvable" })),
+      success: false,
+    };
+  }
+
+  const data: any[] = [];
+  const errors: { id: string; error: string }[] = [];
+
+  for (const id of ids) {
+    try {
+      data.push(await qualifyProspectRecord(supabase, user.profile.client_id, id, apiKey));
+    } catch (error: any) {
+      errors.push({ id, error: error.message || "Erreur lors de la qualification" });
+    }
+  }
+
+  revalidatePath("/flows/prospecting");
+  data.forEach((prospect) => {
+    if (prospect.campaign_id) revalidatePath(`/flows/prospecting/${prospect.campaign_id}`);
+  });
+
+  return { data, errors, success: errors.length === 0 };
+}
+
 // ---------------------------------------------------------------------------
 // GET: All prospects for the current organization (client)
 // ---------------------------------------------------------------------------
@@ -388,6 +617,7 @@ export async function getOrganizationProspects(): Promise<{ data: any[] | null; 
     .from("prospects")
     .select(`
       id, 
+      campaign_id,
       company_name, 
       decision_maker, 
       role, 
@@ -398,7 +628,23 @@ export async function getOrganizationProspects(): Promise<{ data: any[] | null; 
       website,
       location,
       linkedin_url,
+      email,
+      phone,
+      source,
       extra_data,
+      created_at,
+      full_name,
+      role_title,
+      company_description,
+      profile_url,
+      website_url,
+      raw_data,
+      pre_score,
+      pre_score_level,
+      qualification_status,
+      qualification_level,
+      qualification_reason,
+      suggested_message,
       company:companies (
         industry,
         size_range,
@@ -444,6 +690,7 @@ export async function getProspectsByList(listId: string): Promise<{ data: any[] 
     .select(`
       prospect:prospects (
         id, 
+        campaign_id,
         company_name, 
         decision_maker, 
         role, 
@@ -454,7 +701,23 @@ export async function getProspectsByList(listId: string): Promise<{ data: any[] 
         website,
         location,
         linkedin_url,
+        email,
+        phone,
+        source,
         extra_data,
+        created_at,
+        full_name,
+        role_title,
+        company_description,
+        profile_url,
+        website_url,
+        raw_data,
+        pre_score,
+        pre_score_level,
+        qualification_status,
+        qualification_level,
+        qualification_reason,
+        suggested_message,
         company:companies (
           industry,
           size_range,

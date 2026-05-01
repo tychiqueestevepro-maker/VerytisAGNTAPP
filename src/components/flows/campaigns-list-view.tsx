@@ -23,7 +23,9 @@ import {
   Package,
   Layers,
   Settings2,
+  Activity,
   ExternalLink,
+  Zap,
   X,
   ChevronDown,
 } from "lucide-react";
@@ -110,9 +112,8 @@ const WIZARD_STEPS = [
   { key: "offer", icon: Package, title: "Votre offre", subtitle: "Décrivez ce que vous vendez en 2-3 phrases." },
   { key: "icp", icon: Target, title: "Cible ICP", subtitle: "Secteurs et décideurs à privilégier." },
   { key: "location", icon: MapPin, title: "Localisation", subtitle: "Zones géographiques cibles." },
-  { key: "sources", icon: Search, title: "Sources de leads", subtitle: "Canaux de recherche de prospects." },
   { key: "tone", icon: MessageSquare, title: "Ton des messages", subtitle: "Style rédactionnel de l'IA." },
-  { key: "ops", icon: Settings2, title: "Règles opérationnelles", subtitle: "Volume et critères d'injection." },
+  { key: "ops", icon: Settings2, title: "Règles opérationnelles", subtitle: "Automatisation et séquences." },
 ];
 
 // ---------------------------------------------------------------------------
@@ -186,7 +187,7 @@ export function CampaignsListView({
     setIndustries(d.icp_industries || []);
     setRoles(d.icp_roles || []);
     setLocations(d.locations || ["France"]);
-    setSources(d.sources || ["LinkedIn"]);
+    setSources(["LinkedIn", "Google Maps", "Annuaires sectoriels"]);
     setTone(d.tone || "Professionnel et direct");
 
     try {
@@ -432,7 +433,7 @@ export function CampaignsListView({
                     </div>
                   </div>
                   <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-white/20 bg-white/5 px-3 py-1 rounded-full font-mono">
-                    Étape {currentStep + 1} sur 6
+                    Étape {currentStep + 1} sur 5
                   </span>
                 </div>
 
@@ -554,35 +555,9 @@ export function CampaignsListView({
                     </div>
                   )}
 
-                  {currentStep === 3 && (
-                    <div className="space-y-3">
-                      {[
-                        { id: "LinkedIn", title: "LinkedIn ciblé", desc: "Recherche et qualification de profils professionnels" },
-                        { id: "Google Maps", title: "Prospection locale", desc: "Identification d’entreprises via zones géographiques" },
-                        { id: "Annuaires sectoriels", title: "Données sectorielles", desc: "Accès à des bases spécialisées par industrie" },
-                        { id: "Base de données clients", title: "Base interne", desc: "Exploitation de vos données clients existantes" }
-                      ].map(s => {
-                        const active = sources.includes(s.id);
-                        return (
-                          <button
-                            key={s.id}
-                            onClick={() => toggleTag(sources, s.id, setSources)}
-                            className={`w-full p-4 rounded-2xl border flex items-center justify-between transition-all text-left ${
-                              active ? "bg-white/10 border-white/20 text-white" : "bg-white/[0.02] border-white/5 text-white/40 hover:bg-white/5"
-                            }`}
-                          >
-                            <div>
-                              <p className="text-sm font-bold text-white mb-1">{s.title}</p>
-                              <p className="text-[10px] text-white/40 leading-relaxed">{s.desc}</p>
-                            </div>
-                            {active && <CheckCircle2 className="size-5 text-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.3)] shrink-0 ml-4" />}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  )}
+                  {/* REMOVED SOURCES STEP */}
 
-                  {currentStep === 4 && (
+                  {currentStep === 3 && (
                     <div className="grid grid-cols-2 gap-4">
                       {[
                         "Professionnel et direct",
@@ -608,12 +583,12 @@ export function CampaignsListView({
                     </div>
                   )}
 
-                  {currentStep === 5 && (
+                  {currentStep === 4 && (
                     <div className="space-y-8">
                       <div className="flex items-center justify-between p-6 bg-white/[0.02] border border-white/5 rounded-2xl">
                         <div className="flex items-center gap-4">
                           <div className="size-10 rounded-xl bg-emerald-500/10 flex items-center justify-center">
-                            <ActivityIcon className="size-5 text-emerald-500" />
+                            <Activity className="size-5 text-emerald-500" />
                           </div>
                           <div>
                             <p className="text-sm font-bold text-white mb-1">Prospects par jour</p>
@@ -639,9 +614,9 @@ export function CampaignsListView({
                             autoAdd ? "bg-emerald-500/10 border-emerald-500/20" : "bg-white/[0.02] border-white/5"
                           }`}
                         >
-                          <CheckCircle2 className={`size-5 mb-4 ${autoAdd ? "text-emerald-500" : "text-white/10"}`} />
-                          <p className="text-sm font-bold text-white mb-1">Injection automatique</p>
-                          <p className="text-[10px] text-white/30 leading-relaxed">Ajouter les leads sans validation manuelle préalable.</p>
+                          <Zap className={`size-5 mb-4 ${autoAdd ? "text-emerald-500" : "text-white/10"}`} />
+                          <p className="text-sm font-bold text-white mb-1">Séquences automatiques</p>
+                          <p className="text-[10px] text-white/30 leading-relaxed">Activer les séquences dès l'importation des prospects.</p>
                         </button>
                         <button
                           onClick={() => setLinkedinRequired(!linkedinRequired)}
@@ -649,9 +624,9 @@ export function CampaignsListView({
                             linkedinRequired ? "bg-blue-500/10 border-blue-500/20" : "bg-white/[0.02] border-white/5"
                           }`}
                         >
-                          <ExternalLink className={`size-5 mb-4 ${linkedinRequired ? "text-blue-500" : "text-white/10"}`} />
-                          <p className="text-sm font-bold text-white mb-1">LinkedIn requis</p>
-                          <p className="text-[10px] text-white/30 leading-relaxed">Prioriser les profils avec un lien LinkedIn vérifié.</p>
+                          <CheckCircle2 className={`size-5 mb-4 ${linkedinRequired ? "text-blue-500" : "text-white/10"}`} />
+                          <p className="text-sm font-bold text-white mb-1">Séquences autonomes</p>
+                          <p className="text-[10px] text-white/30 leading-relaxed">Envoi des messages par l'IA sans vérification humaine.</p>
                         </button>
                       </div>
                     </div>

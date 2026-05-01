@@ -16,8 +16,18 @@ export interface ClientFlow {
 export interface Campaign {
   id: string;
   flow_id: string;
+  organization_id?: string | null;
+  name?: string | null;
   display_name: string;
   description: string | null;
+  objective?: string | null;
+  target_description?: string | null;
+  target_roles?: string[];
+  target_industries?: string[];
+  target_locations?: string[];
+  target_company_size?: string[];
+  tone?: string | null;
+  source?: string | null;
   status: CampaignStatus;
   config: any;
   sequence_id: string | null;

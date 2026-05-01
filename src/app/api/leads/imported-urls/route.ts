@@ -22,7 +22,7 @@ export async function GET(request: Request) {
       return NextResponse.json({ success: false, error: error.message }, { status: 500 });
     }
 
-    const urls = data.map(p => p.linkedin_url).filter(Boolean);
+    const urls = data.map((p: { linkedin_url: string | null }) => p.linkedin_url).filter(Boolean);
 
     return NextResponse.json({ success: true, urls });
   } catch (error: any) {
