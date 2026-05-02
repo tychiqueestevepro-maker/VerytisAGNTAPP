@@ -435,6 +435,7 @@ async function qualifyProspectRecord(
         industry,
         size_range,
         description,
+        website,
         linkedin_url,
         location
       )
@@ -529,6 +530,7 @@ async function qualifyProspectRecord(
         industry,
         size_range,
         description,
+        website,
         linkedin_url,
         location
       )
@@ -649,6 +651,7 @@ export async function getOrganizationProspects(): Promise<{ data: any[] | null; 
         industry,
         size_range,
         description,
+        website,
         linkedin_url,
         location
       )
@@ -722,6 +725,7 @@ export async function getProspectsByList(listId: string): Promise<{ data: any[] 
           industry,
           size_range,
           description,
+          website,
           linkedin_url,
           location
         )

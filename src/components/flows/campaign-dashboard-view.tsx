@@ -105,6 +105,7 @@ interface Prospect {
     description?: string | null;
     linkedin_url?: string | null;
     location?: string | null;
+    website?: string | null;
   } | null;
 }
 
@@ -185,30 +186,39 @@ const ProspectAvatar = ({ name, photoUrl, colorIndex }: { name: string; photoUrl
   );
 };
 
-const getPreScoreLevel = (prospect: Prospect): "high" | "medium" | "low" => {
-  if (prospect.pre_score_level) return prospect.pre_score_level;
-  const score = prospect.pre_score ?? prospect.fit_score ?? 0;
-  if (score >= 70) return "high";
-  if (score >= 40) return "medium";
-  return "low";
+type IcpLevel = "high" | "medium" | "low";
+
+const getIcpLevel = (prospect: Prospect): IcpLevel | null => {
+  return prospect.qualification_level ?? null;
 };
 
-const PRE_SCORE_META: Record<"high" | "medium" | "low", { label: string; shortLabel: string; className: string }> = {
+const ICP_META: Record<IcpLevel, { label: string; shortLabel: string; className: string }> = {
   high: {
-    label: "Pertinence élevée",
-    shortLabel: "Élevée",
+    label: "ICP élevé",
+    shortLabel: "Élevé",
     className: "bg-emerald-500/10 text-emerald-400 border-emerald-500/20",
   },
   medium: {
-    label: "Pertinence moyenne",
-    shortLabel: "Moyenne",
+    label: "ICP moyen",
+    shortLabel: "Moyen",
     className: "bg-orange-500/10 text-orange-400 border-orange-500/20",
   },
   low: {
-    label: "Pertinence faible",
+    label: "ICP faible",
     shortLabel: "Faible",
     className: "bg-red-500/10 text-red-400 border-red-500/20",
   },
+};
+
+const EMPTY_ICP_META = {
+  label: "—",
+  shortLabel: "—",
+  className: "bg-white/[0.03] text-white/25 border-white/10",
+};
+
+const getIcpMeta = (prospect: Prospect) => {
+  const level = getIcpLevel(prospect);
+  return level ? ICP_META[level] : EMPTY_ICP_META;
 };
 
 const QUALIFICATION_META: Record<"high" | "medium" | "low", { label: string; className: string }> = {
@@ -240,6 +250,96 @@ const normalizeProspectList = (prospects: any[]): Prospect[] => prospects.map((p
   ...prospect,
   company: Array.isArray(prospect.company) ? prospect.company[0] || null : prospect.company || null,
 }));
+
+const firstText = (...values: any[]) => {
+  for (const value of values) {
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return null;
+};
+
+const getOrganizationData = (prospect: Prospect) => {
+  const extraOrg = prospect.extra_data?.organization;
+  const rawOrg = prospect.raw_data?.organization;
+  return {
+    ...(rawOrg && typeof rawOrg === "object" ? rawOrg : {}),
+    ...(extraOrg && typeof extraOrg === "object" ? extraOrg : {}),
+  };
+};
+
+const getProspectIndustry = (prospect: Prospect) => {
+  const organization = getOrganizationData(prospect);
+  return firstText(
+    prospect.company?.industry,
+    prospect.extra_data?.industry,
+    prospect.raw_data?.industry,
+    organization.industry
+  );
+};
+
+const getProspectCompanySize = (prospect: Prospect) => {
+  const organization = getOrganizationData(prospect);
+  return firstText(
+    prospect.company?.size_range,
+    prospect.extra_data?.company_size,
+    prospect.raw_data?.companySize,
+    prospect.raw_data?.company_size,
+    organization.companySize,
+    organization.company_size,
+    organization.size_range
+  );
+};
+
+const getProspectLocation = (prospect: Prospect) => {
+  const organization = getOrganizationData(prospect);
+  return firstText(
+    prospect.location,
+    prospect.company?.location,
+    prospect.extra_data?.location,
+    prospect.raw_data?.profileLocation,
+    prospect.raw_data?.location,
+    organization.location
+  );
+};
+
+const getProspectWebsite = (prospect: Prospect) => {
+  const organization = getOrganizationData(prospect);
+  return firstText(
+    prospect.website,
+    prospect.website_url,
+    prospect.company?.website,
+    prospect.extra_data?.website_url,
+    prospect.raw_data?.companyWebsite,
+    prospect.raw_data?.website_url,
+    organization.website,
+    organization.website_url
+  );
+};
+
+const getProspectCompanyLinkedin = (prospect: Prospect) => {
+  const organization = getOrganizationData(prospect);
+  return firstText(
+    prospect.company?.linkedin_url,
+    prospect.extra_data?.company_linkedin_url,
+    prospect.raw_data?.companyLinkedinUrl,
+    prospect.raw_data?.organizationLinkedinUrl,
+    organization.linkedin_url,
+    organization.linkedinUrl
+  );
+};
+
+const getProspectCompanyDescription = (prospect: Prospect) => {
+  const organization = getOrganizationData(prospect);
+  return firstText(
+    prospect.company_description,
+    prospect.company?.description,
+    prospect.extra_data?.company_description,
+    prospect.raw_data?.companyDescription,
+    prospect.raw_data?.organizationDescription,
+    organization.description,
+    organization.mission
+  );
+};
 
 const getTitleAndCompany = (role: string, companyName?: string | null) => {
   if (!role || role === "Décideur") {
@@ -853,7 +953,7 @@ export function CampaignDashboardView({
   const [activeProspectTab, setActiveProspectTab] = useState<"campaign" | "lists" | "all">("campaign");
   const [searchQuery, setSearchQuery] = useState("");
   const [filterStep, setFilterStep] = useState<string>("all");
-  const [filterPertinence, setFilterPertinence] = useState<string>("all");
+  const [filterIcp, setFilterIcp] = useState<string>("all");
   const [filterEmail, setFilterEmail] = useState<string>("all");
   const [isFilterOpen, setIsFilterOpen] = useState(false);
   const [sortBy, setSortBy] = useState<string>("created_at");
@@ -873,12 +973,12 @@ export function CampaignDashboardView({
 
       const matchesStep = filterStep === "all" || getStepLabel(p.status) === filterStep;
 
-      const pPertinence = getPreScoreLevel(p);
-      const matchesPertinence = filterPertinence === "all" || pPertinence === filterPertinence;
+      const pIcp = getIcpLevel(p);
+      const matchesIcp = filterIcp === "all" || pIcp === filterIcp;
 
       const matchesEmail = filterEmail === "all" || (filterEmail === "has" ? !!p.email : !p.email);
 
-      return matchesSearch && matchesStep && matchesPertinence && matchesEmail;
+      return matchesSearch && matchesStep && matchesIcp && matchesEmail;
     });
 
     const sorted = [...filtered].sort((a, b) => {
@@ -890,8 +990,8 @@ export function CampaignDashboardView({
         valA = stepOrder[getStepLabel(a.status)] || 0;
         valB = stepOrder[getStepLabel(b.status)] || 0;
       } else if (sortBy === 'pre_score') {
-        valA = a.pre_score ?? a.fit_score ?? 0;
-        valB = b.pre_score ?? b.fit_score ?? 0;
+        valA = getIcpLevel(a) ? (a.fit_score ?? a.pre_score ?? 0) : -1;
+        valB = getIcpLevel(b) ? (b.fit_score ?? b.pre_score ?? 0) : -1;
       } else if (sortBy === 'created_at') {
         valA = new Date(a.created_at || 0).getTime();
         valB = new Date(b.created_at || 0).getTime();
@@ -903,7 +1003,7 @@ export function CampaignDashboardView({
     });
 
     setDisplayProspects(sorted);
-  }, [initialProspects, activeProspectTab, searchQuery, filterStep, filterPertinence, filterEmail, sortBy, sortOrder]);
+  }, [initialProspects, activeProspectTab, searchQuery, filterStep, filterIcp, filterEmail, sortBy, sortOrder]);
 
   // Fetch data based on active tab
   useEffect(() => {
@@ -1258,7 +1358,7 @@ export function CampaignDashboardView({
                   <tr>
                     <th className="pl-6 py-4 font-bold">Prospect</th>
                     <th className="px-6 py-4 font-bold text-center w-32">Step</th>
-                    <th className="px-6 py-4 font-bold text-center w-40">Pré-pertinence</th>
+                    <th className="px-6 py-4 font-bold text-center w-40">ICP</th>
                     <th className="px-6 py-4 font-bold text-right w-44"></th>
                   </tr>
                 </thead>
@@ -1268,7 +1368,7 @@ export function CampaignDashboardView({
                   ) : (
                     displayProspects.slice(0, 6).map((p: Prospect, i: number) => {
                       const isSelected = selectedIds.includes(p.id);
-                      const preScoreMeta = PRE_SCORE_META[getPreScoreLevel(p)];
+                      const icpMeta = getIcpMeta(p);
                       const isQualifying = qualifyingIds.includes(p.id);
                       return (
                         <tr key={p.id} className={`hover:bg-white/[0.02] transition-colors group cursor-pointer border-b border-white/5 last:border-0 ${isSelected ? "bg-blue-500/5" : ""}`}>
@@ -1321,9 +1421,9 @@ export function CampaignDashboardView({
                         <td className="px-6 py-4 text-center w-40">
                           <span className={cn(
                             "px-3 py-1 rounded-md text-[10px] font-bold border inline-block min-w-[92px]",
-                            preScoreMeta.className
+                            icpMeta.className
                           )}>
-                            {preScoreMeta.shortLabel}
+                            {icpMeta.shortLabel}
                           </span>
                         </td>
                         <td className="px-6 py-4 text-right w-44">
@@ -1507,7 +1607,7 @@ export function CampaignDashboardView({
                       variant="outline"
                       className={cn(
                         "border-[#1F1F1F] bg-black/40 text-white/60 hover:text-white gap-1.5 h-8 rounded-lg px-2.5 text-[9px] font-bold uppercase tracking-wider shrink-0",
-                        (filterStep !== "all" || filterPertinence !== "all" || filterEmail !== "all") && "text-blue-400 border-blue-500/30 bg-blue-500/5"
+                        (filterStep !== "all" || filterIcp !== "all" || filterEmail !== "all") && "text-blue-400 border-blue-500/30 bg-blue-500/5"
                       )}
                     >
                       <Filter className="size-3" />
@@ -1527,7 +1627,7 @@ export function CampaignDashboardView({
                             <button
                               onClick={() => {
                                 setFilterStep("all");
-                                setFilterPertinence("all");
+                                setFilterIcp("all");
                                 setFilterEmail("all");
                                 setSortBy("created_at");
                                 setSortOrder("desc");
@@ -1548,7 +1648,7 @@ export function CampaignDashboardView({
                                   className="w-full bg-white/[0.03] border border-white/10 rounded-lg px-3 py-2 text-[11px] text-white focus:outline-none focus:border-blue-500/50"
                                 >
                                   <option value="created_at">Date d'import</option>
-                                  <option value="pre_score">Pertinence</option>
+                                  <option value="pre_score">ICP</option>
                                   <option value="step">Step</option>
                                 </select>
                               </div>
@@ -1583,16 +1683,16 @@ export function CampaignDashboardView({
                             </div>
 
                             <div className="space-y-2">
-                              <label className="text-[10px] text-white/20 uppercase tracking-widest font-bold">Pertinence</label>
+                              <label className="text-[10px] text-white/20 uppercase tracking-widest font-bold">ICP</label>
                               <select
-                                value={filterPertinence}
-                                onChange={(e) => setFilterPertinence(e.target.value)}
+                                value={filterIcp}
+                                onChange={(e) => setFilterIcp(e.target.value)}
                                 className="w-full bg-white/[0.03] border border-white/10 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-blue-500/50"
                               >
-                                <option value="all">Toutes les pertinences</option>
-                                <option value="high">Pertinence élevée</option>
-                                <option value="medium">Pertinence moyenne</option>
-                                <option value="low">Pertinence faible</option>
+                                <option value="all">Tous les ICP</option>
+                                <option value="high">ICP élevé</option>
+                                <option value="medium">ICP moyen</option>
+                                <option value="low">ICP faible</option>
                               </select>
                             </div>
 
@@ -1701,7 +1801,7 @@ export function CampaignDashboardView({
                         </th>
                         <th className="px-6 py-5 font-bold min-w-[200px]">Contact</th>
                         <th className="px-6 py-5 font-bold text-center w-32 shrink-0">Step</th>
-                        <th className="px-6 py-5 font-bold text-center w-40 shrink-0">Pré-pertinence</th>
+                        <th className="px-6 py-5 font-bold text-center w-40 shrink-0">ICP</th>
                         {!selectedProspect && (
                           <>
                             <th className="px-6 py-5 font-bold text-center w-32">Date d'import</th>
@@ -1733,7 +1833,7 @@ export function CampaignDashboardView({
                       ) : (
                         displayProspects.map((p, i) => {
                         const isSelected = selectedIds.includes(p.id);
-                        const preScoreMeta = PRE_SCORE_META[getPreScoreLevel(p)];
+                        const icpMeta = getIcpMeta(p);
                         const isQualifying = qualifyingIds.includes(p.id);
                         return (
                           <tr
@@ -1802,9 +1902,9 @@ export function CampaignDashboardView({
                             <td className="px-6 py-5 text-center w-40 shrink-0">
                               <span className={cn(
                                 "px-3 py-1 rounded-md text-[10px] font-bold border inline-block min-w-[92px]",
-                                preScoreMeta.className
+                                icpMeta.className
                               )}>
-                                {preScoreMeta.shortLabel}
+                                {icpMeta.shortLabel}
                               </span>
                             </td>
                             {!selectedProspect && (
@@ -1899,12 +1999,12 @@ export function CampaignDashboardView({
 
                       <div className="grid grid-cols-2 gap-4">
                         <div className="p-5 rounded-xl bg-white/[0.03] border border-[#1F1F1F] flex flex-col items-center justify-center text-center">
-                          <p className="text-[10px] text-white/20 uppercase tracking-[0.2em] font-bold mb-1.5">Pré-pertinence</p>
+                          <p className="text-[10px] text-white/20 uppercase tracking-[0.2em] font-bold mb-1.5">ICP</p>
                           <span className={cn(
                             "px-3 py-1.5 rounded-md text-[11px] font-bold border",
-                            PRE_SCORE_META[getPreScoreLevel(selectedProspect)].className
+                            getIcpMeta(selectedProspect).className
                           )}>
-                            {PRE_SCORE_META[getPreScoreLevel(selectedProspect)].label}
+                            {getIcpMeta(selectedProspect).label}
                           </span>
                         </div>
                         <div className="p-5 rounded-xl bg-white/[0.03] border border-[#1F1F1F] flex flex-col items-center justify-center text-center">
@@ -1967,21 +2067,21 @@ export function CampaignDashboardView({
                               <p className="text-[10px] text-white/20 uppercase tracking-widest font-bold">Industry</p>
                               <div className="flex items-center gap-2 text-[13px] text-white/70">
                                 <Building2 className="size-3.5 text-white/20 shrink-0" />
-                                <span className="truncate">{selectedProspect.company?.industry || "N/A"}</span>
+                                <span className="truncate">{getProspectIndustry(selectedProspect) || "N/A"}</span>
                               </div>
                             </div>
                             <div className="space-y-1.5">
                               <p className="text-[10px] text-white/20 uppercase tracking-widest font-bold">Size</p>
                               <div className="flex items-center gap-2 text-[13px] text-white/70">
                                 <Users className="size-3.5 text-white/20 shrink-0" />
-                                <span className="truncate">{selectedProspect.company?.size_range || "N/A"}</span>
+                                <span className="truncate">{getProspectCompanySize(selectedProspect) || "N/A"}</span>
                               </div>
                             </div>
                             <div className="space-y-1.5">
                               <p className="text-[10px] text-white/20 uppercase tracking-widest font-bold">Location</p>
                               <div className="flex items-center gap-2 text-[13px] text-white/70">
                                 <MapPin className="size-3.5 text-white/20 shrink-0" />
-                                <span className="truncate">{selectedProspect.location || selectedProspect.company?.location || "N/A"}</span>
+                                <span className="truncate">{getProspectLocation(selectedProspect) || "N/A"}</span>
                               </div>
                             </div>
                             <div className="space-y-1.5">
@@ -1995,8 +2095,8 @@ export function CampaignDashboardView({
                               <p className="text-[10px] text-white/20 uppercase tracking-widest font-bold">Website</p>
                               <div className="flex items-center gap-2 text-[13px] text-white/70 overflow-hidden">
                                 <Globe className="size-3.5 text-white/20 shrink-0" />
-                                {selectedProspect.website ? (
-                                  <a href={selectedProspect.website.startsWith('http') ? selectedProspect.website : `https://${selectedProspect.website}`} target="_blank" rel="noreferrer" className="text-blue-400 hover:text-blue-300 transition-colors truncate">{selectedProspect.website.replace(/^https?:\/\//, '')}</a>
+                                {getProspectWebsite(selectedProspect) ? (
+                                  <a href={getProspectWebsite(selectedProspect)!.startsWith('http') ? getProspectWebsite(selectedProspect)! : `https://${getProspectWebsite(selectedProspect)!}`} target="_blank" rel="noreferrer" className="text-blue-400 hover:text-blue-300 transition-colors truncate">{getProspectWebsite(selectedProspect)!.replace(/^https?:\/\//, '')}</a>
                                 ) : "N/A"}
                               </div>
                             </div>
@@ -2033,9 +2133,9 @@ export function CampaignDashboardView({
                             <p className="text-[10px] text-white/20 uppercase tracking-widest font-bold">Company LinkedIn</p>
                             <div className="flex items-center gap-2 text-[13px] text-white/70">
                               <Link className="size-3.5 text-white/20 shrink-0" />
-                              {selectedProspect.company?.linkedin_url || selectedProspect.linkedin_url ? (
-                                <a href={selectedProspect.company?.linkedin_url || selectedProspect.linkedin_url || '#'} target="_blank" rel="noreferrer" className="text-blue-400 hover:text-blue-300 transition-colors truncate flex items-center gap-1.5">
-                                  Lien profil <ExternalLink className="size-3" />
+                              {getProspectCompanyLinkedin(selectedProspect) ? (
+                                <a href={getProspectCompanyLinkedin(selectedProspect)!} target="_blank" rel="noreferrer" className="text-blue-400 hover:text-blue-300 transition-colors truncate flex items-center gap-1.5">
+                                  Lien entreprise <ExternalLink className="size-3" />
                                 </a>
                               ) : "N/A"}
                             </div>
@@ -2048,7 +2148,7 @@ export function CampaignDashboardView({
                         <h4 className="text-[10px] font-bold text-white/20 uppercase tracking-[0.2em] px-1">Description</h4>
                         <div className="p-6 rounded-xl bg-white/[0.03] border border-[#1F1F1F]">
                           <p className="text-[13px] text-white/50 leading-relaxed italic">
-                            {selectedProspect.company_description || selectedProspect.company?.description ? `"${selectedProspect.company_description || selectedProspect.company?.description}"` : "Aucune description disponible."}
+                            {getProspectCompanyDescription(selectedProspect) ? `"${getProspectCompanyDescription(selectedProspect)}"` : "Aucune description disponible."}
                           </p>
                         </div>
                       </div>

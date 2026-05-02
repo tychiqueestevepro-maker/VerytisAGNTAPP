@@ -219,9 +219,9 @@ export function preScoreLevelFromScore(score: number): PreScoreLevel {
 }
 
 export function preScoreLabel(level?: string | null): string {
-  if (level === "high") return "Pertinence élevée";
-  if (level === "medium") return "Pertinence moyenne";
-  return "Pertinence faible";
+  if (level === "high") return "ICP élevé";
+  if (level === "medium") return "ICP moyen";
+  return "ICP faible";
 }
 
 function normalizeText(value: string): string {

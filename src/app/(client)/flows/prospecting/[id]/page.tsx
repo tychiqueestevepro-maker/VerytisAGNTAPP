@@ -74,6 +74,7 @@ export default async function CampaignDetailPage({ params }: Props) {
         industry,
         size_range,
         description,
+        website,
         linkedin_url,
         location
       )

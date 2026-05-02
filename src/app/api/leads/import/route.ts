@@ -26,16 +26,173 @@ type LeadInput = {
   scraped_at?: string | null;
   about?: string | null;
   location?: string | null;
+  profileLocation?: string | null;
   website?: string | null;
   website_url?: string | null;
+  companyWebsite?: string | null;
   company_description?: string | null;
+  companyDescription?: string | null;
+  companyLocation?: string | null;
+  companyLinkedinUrl?: string | null;
+  companySize?: string | null;
+  organization?: Record<string, unknown> | null;
+  organizationDescription?: string | null;
+  organizationMission?: string | null;
+  organizationLocation?: string | null;
+  organizationLinkedinUrl?: string | null;
   raw_result_text?: string | null;
   scrape_mode?: string | null;
   fast_import?: boolean | null;
+  email?: string | null;
+  industry?: string | null;
+};
+
+type CompanyImportPayload = {
+  name: string | null;
+  website: string | null;
+  linkedinUrl: string | null;
+  description: string | null;
+  location: string | null;
+  industry: string | null;
+  companySize: string | null;
+  source: string;
+  raw: Record<string, unknown>;
 };
 
 // Cache the bucket check to avoid redundant API calls
 let bucketEnsured = false;
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function pickString(...values: unknown[]): string | null {
+  for (const value of values) {
+    if (typeof value === 'string' && value.trim()) return value.trim();
+  }
+  return null;
+}
+
+function meaningfulDescription(value: unknown, ...blockedValues: unknown[]): string | null {
+  if (typeof value !== 'string') return null;
+  const cleaned = value.replace(/\s+/g, ' ').trim();
+  if (!cleaned) return null;
+
+  const normalized = cleaned.toLowerCase();
+  const blocked = blockedValues
+    .filter((item): item is string => typeof item === 'string' && Boolean(item.trim()))
+    .map(item => item.trim().toLowerCase());
+
+  if (blocked.includes(normalized)) return null;
+  if (cleaned.length < 40 && !/[.!?]/.test(cleaned)) return null;
+  return cleaned;
+}
+
+function organizationValue(organization: Record<string, unknown>, ...keys: string[]): string | null {
+  for (const key of keys) {
+    const value = pickString(organization[key]);
+    if (value) return value;
+  }
+  return null;
+}
+
+function companyCacheKey(clientId: string, company: CompanyImportPayload): string | null {
+  const normalize = (value: string | null) => value?.trim().toLowerCase() || null;
+  const discriminator = normalize(company.linkedinUrl)
+    ? `linkedin:${normalize(company.linkedinUrl)}`
+    : normalize(company.website)
+      ? `website:${normalize(company.website)}`
+      : normalize(company.name)
+        ? `name:${normalize(company.name)}`
+        : null;
+
+  return discriminator ? `${clientId}:${discriminator}` : null;
+}
+
+async function resolveCompanyId(
+  supabaseService: SupabaseServiceClient,
+  clientId: string,
+  company: CompanyImportPayload
+) {
+  if (!company.name) return null;
+
+  let existing = null;
+
+  if (company.linkedinUrl) {
+    const { data } = await supabaseService
+      .from('companies')
+      .select('id')
+      .eq('client_id', clientId)
+      .eq('linkedin_url', company.linkedinUrl)
+      .maybeSingle();
+    existing = data;
+  }
+
+  if (!existing && company.website) {
+    const { data } = await supabaseService
+      .from('companies')
+      .select('id')
+      .eq('client_id', clientId)
+      .eq('website', company.website)
+      .maybeSingle();
+    existing = data;
+  }
+
+  if (!existing) {
+    const { data } = await supabaseService
+      .from('companies')
+      .select('id')
+      .eq('client_id', clientId)
+      .ilike('name', company.name)
+      .limit(1)
+      .maybeSingle();
+    existing = data;
+  }
+
+  const companyPayload = {
+    client_id: clientId,
+    name: company.name,
+    website: company.website,
+    linkedin_url: company.linkedinUrl,
+    industry: company.industry,
+    location: company.location,
+    size_range: company.companySize,
+    description: company.description,
+    source: company.source,
+    confidence_score: company.description ? 80 : 55,
+    extra_data: {
+      imported_via: 'chrome_extension',
+      organization: company.raw,
+    },
+    updated_at: new Date().toISOString(),
+  };
+
+  if (existing?.id) {
+    const updatePayload = Object.fromEntries(
+      Object.entries(companyPayload).filter(([, value]) => value !== null && value !== undefined)
+    );
+
+    await supabaseService
+      .from('companies')
+      .update(updatePayload)
+      .eq('id', existing.id);
+
+    return existing.id;
+  }
+
+  const { data: inserted, error } = await supabaseService
+    .from('companies')
+    .insert(companyPayload)
+    .select('id')
+    .single();
+
+  if (error) {
+    console.warn('[API] Company insert failed, continuing without company_id:', error.message);
+    return null;
+  }
+
+  return inserted?.id ?? null;
+}
 
 async function ensureProspectPhotosBucket(supabaseService: SupabaseServiceClient) {
   if (bucketEnsured) return;
@@ -179,6 +336,18 @@ export async function POST(request: Request) {
       campaign = campaignData;
     }
 
+    const companyIdCache = new Map<string, Promise<string | null>>();
+    const resolveCompanyIdOnce = (company: CompanyImportPayload) => {
+      const key = companyCacheKey(clientId, company);
+      if (!key) return resolveCompanyId(supabase, clientId, company);
+
+      if (!companyIdCache.has(key)) {
+        companyIdCache.set(key, resolveCompanyId(supabase, clientId, company));
+      }
+
+      return companyIdCache.get(key)!;
+    };
+
     // Préparation des données pour la table 'prospects'
     const prospectsToInsert = await Promise.all(leads.map(async (lead: LeadInput) => {
       const originalPhotoUrl = lead.photo_data_url || lead.photo_url || lead.image_url || null;
@@ -191,14 +360,78 @@ export async function POST(request: Request) {
 
       const fullName = lead.name || [lead.first_name, lead.last_name].filter(Boolean).join(' ') || 'Inconnu';
       const role = lead.role || lead.role_title || lead.title || lead.headline || null;
-      const companyName = lead.company || lead.company_name || null;
+      const organization = asRecord(lead.organization);
+      const companyName = pickString(
+        organizationValue(organization, 'name'),
+        lead.company,
+        lead.company_name
+      );
       const linkedinUrl = lead.profile_url || lead.linkedin_url || null;
-      const website = lead.website || lead.website_url || null;
-      const companyDescription = lead.company_description || lead.about || lead.raw_result_text || lead.headline || null;
+      const companyLinkedinUrl = pickString(
+        lead.companyLinkedinUrl,
+        lead.organizationLinkedinUrl,
+        organizationValue(organization, 'linkedinUrl', 'linkedin_url')
+      );
+      const website = pickString(
+        lead.companyWebsite,
+        organizationValue(organization, 'website', 'website_url'),
+        lead.website,
+        lead.website_url
+      );
+      const companyLocation = pickString(
+        lead.companyLocation,
+        lead.organizationLocation,
+        organizationValue(organization, 'location')
+      );
+      const location = pickString(
+        lead.location,
+        lead.profileLocation,
+        companyLocation
+      );
+      const industry = pickString(
+        lead.industry,
+        organizationValue(organization, 'industry')
+      );
+      const companySize = pickString(
+        lead.companySize,
+        organizationValue(organization, 'companySize', 'company_size', 'size_range')
+      );
+      const companyDescription = pickString(
+        meaningfulDescription(lead.company_description, companyName, fullName, role),
+        meaningfulDescription(lead.companyDescription, companyName, fullName, role),
+        meaningfulDescription(lead.organizationDescription, companyName, fullName, role),
+        meaningfulDescription(lead.organizationMission, companyName, fullName, role),
+        meaningfulDescription(organizationValue(organization, 'description'), companyName, fullName, role),
+        meaningfulDescription(organizationValue(organization, 'mission'), companyName, fullName, role),
+        meaningfulDescription(lead.about, companyName, fullName, role),
+        meaningfulDescription(lead.raw_result_text, companyName, fullName, role)
+      );
+      const email = lead.email || null;
+      const companyId = await resolveCompanyIdOnce({
+        name: companyName,
+        website,
+        linkedinUrl: companyLinkedinUrl,
+        description: companyDescription,
+        location: companyLocation,
+        industry,
+        companySize,
+        source: lead.source || source || 'linkedin',
+        raw: {
+          ...organization,
+          name: companyName,
+          description: companyDescription,
+          location: companyLocation,
+          linkedin_url: companyLinkedinUrl,
+          website_url: website,
+          company_size: companySize,
+          industry,
+        },
+      });
 
       const baseProspect = {
         client_id: clientId,
         campaign_id: campaignId || null,
+        company_id: companyId,
         decision_maker: fullName,
         role,
         company_name: companyName,
@@ -207,13 +440,14 @@ export async function POST(request: Request) {
         source_url: lead.page_url || null,
         source: lead.source || source || 'linkedin',
         website,
-        location: lead.location || null,
+        location,
         status: 'discovered',
         full_name: fullName,
         role_title: role,
         company_description: companyDescription,
         profile_url: linkedinUrl,
         website_url: website,
+        email,
         raw_data: lead,
         extra_data: {
           raw_data: lead,
@@ -221,7 +455,27 @@ export async function POST(request: Request) {
           imported_via: 'chrome_extension',
           original_headline: lead.headline || null,
           about: lead.about || null,
+          location,
+          company_location: companyLocation,
+          company_linkedin_url: companyLinkedinUrl,
+          website_url: website,
+          company_size: companySize,
+          industry,
           company_description: companyDescription,
+          organization: {
+            ...organization,
+            name: companyName,
+            description: companyDescription,
+            mission: pickString(lead.organizationMission, organizationValue(organization, 'mission'), companyDescription),
+            location: companyLocation,
+            linkedin_url: companyLinkedinUrl,
+            linkedinUrl: companyLinkedinUrl,
+            website_url: website,
+            website,
+            company_size: companySize,
+            companySize,
+            industry,
+          },
           raw_result_text: lead.raw_result_text || null,
           scrape_mode: lead.scrape_mode || null,
           fast_import: Boolean(lead.fast_import)
