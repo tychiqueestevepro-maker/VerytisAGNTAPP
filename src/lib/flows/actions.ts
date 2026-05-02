@@ -1,6 +1,6 @@
 "use server";
 
-import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { createSupabaseServerClient, createSupabaseServiceClient } from "@/lib/supabase/server";
 import { getUserWithProfile } from "@/lib/auth";
 import { ClientFlow, Campaign, CampaignStatus, WorkflowStepWithAgent } from "@/types/flows";
 import { revalidatePath } from "next/cache";
@@ -9,6 +9,9 @@ import {
   qualifyProspectWithLLM,
 } from "@/lib/prospecting/qualification";
 import { preScoreProspect } from "@/lib/prospecting/scoring";
+import { logCampaignActivity, logCampaignActivities } from "@/lib/flows/activity";
+import { generateSequenceForCampaign } from "./sequences";
+import { personalizeSequenceForProspect } from "@/lib/prospecting/personalization";
 
 type ProspectingCampaignConfig = {
   target_icp?: {
@@ -248,6 +251,7 @@ export async function createProspectingCampaign(
   if (!user || !user.profile?.client_id) return { data: null, error: "Non authentifié" };
 
   const supabase = await createSupabaseServerClient();
+  const serviceClient = createSupabaseServiceClient();
 
   // 1. Ensure the Prospecting Flow exists for this org
   let { data: flow } = await supabase
@@ -321,8 +325,64 @@ export async function createProspectingCampaign(
     return { data: null, error: error.message };
   }
 
+  // 3. Immediately seed a default first step so the campaign isn't empty in the UI
+  // while the AI generation is running (which can take a few seconds)
+  try {
+    const { data: seqData } = await serviceClient
+      .from("sequences")
+      .insert({ client_id: user.profile.client_id, name: `${displayName} Sequence` })
+      .select()
+      .single();
+    
+    if (seqData) {
+      await serviceClient
+        .from("campaigns")
+        .update({ sequence_id: seqData.id })
+        .eq("id", campaign.id);
+        
+      await serviceClient.from("sequence_steps").insert({
+        sequence_id: seqData.id,
+        step_order: 1,
+        name: "Initialisation",
+        action_type: "linkedin",
+        config: { channel: "LinkedIn", message: "Génération de la séquence en cours..." }
+      });
+    }
+  } catch (seedErr) {
+    console.error("Seed sequence failed:", seedErr);
+  }
+
+  // 4. Auto-generate the full sequence with AI
+  const genResult = await generateAndSaveSequence(campaign.id);
+  if (genResult.error) {
+    console.error("Auto-generation of sequence failed:", genResult.error);
+    // If the sequence fails, we might still want to return the campaign 
+    // but with a warning or the error itself. 
+    // Given the user feedback, it's better to surface the error.
+    return { data: campaign, error: `Campagne créée mais la génération de séquence a échoué: ${genResult.error}` };
+  }
+
+  revalidatePath(`/flows/prospecting/${campaign.id}`);
   revalidatePath("/flows/prospecting");
   return { data: campaign, error: null };
+}
+
+export async function deleteCampaign(campaignId: string): Promise<{ success?: boolean; error?: string }> {
+  const supabase = await createSupabaseServerClient();
+
+  // The DB should handle cascading deletions for sequence_steps, prospects, etc.
+  const { error } = await supabase
+    .from("campaigns")
+    .delete()
+    .eq("id", campaignId);
+
+  if (error) {
+    console.error("Delete campaign error:", error);
+    return { error: "Erreur lors de la suppression de la campagne" };
+  }
+
+  revalidatePath("/flows/prospecting");
+  return { success: true };
 }
 
 // ---------------------------------------------------------------------------
@@ -353,6 +413,7 @@ export async function saveSequenceSteps(campaignId: string, steps: any[]): Promi
   if (!user || !user.profile?.client_id) return { error: "Non authentifié" };
 
   const supabase = await createSupabaseServerClient();
+  const serviceClient = createSupabaseServiceClient();
 
   // 1. Get campaign and sequence_id
   const { data: campaign, error: campError } = await supabase
@@ -367,7 +428,7 @@ export async function saveSequenceSteps(campaignId: string, steps: any[]): Promi
 
   // 2. Create sequence if missing
   if (!seqId) {
-    const { data: newSeq, error: seqError } = await supabase
+    const { data: newSeq, error: seqError } = await serviceClient
       .from("sequences")
       .insert({ client_id: user.profile.client_id, name: `${campaign.display_name || 'Campagne'} Sequence` })
       .select()
@@ -376,14 +437,14 @@ export async function saveSequenceSteps(campaignId: string, steps: any[]): Promi
     if (seqError || !newSeq) return { error: "Erreur création séquence" };
     seqId = newSeq.id;
 
-    await supabase
+    await serviceClient
       .from("campaigns")
       .update({ sequence_id: seqId })
       .eq("id", campaignId);
   }
 
   // 3. Delete existing steps
-  await supabase.from("sequence_steps").delete().eq("sequence_id", seqId);
+  await serviceClient.from("sequence_steps").delete().eq("sequence_id", seqId);
 
   // 4. Insert new steps. We flatten the root array, preserving nested branches in config JSONB
   if (steps && steps.length > 0) {
@@ -395,21 +456,69 @@ export async function saveSequenceSteps(campaignId: string, steps: any[]): Promi
       config: { ...s.config, channel: s.channel }
     }));
 
-    const { error: insertError } = await supabase.from("sequence_steps").insert(rows);
+    const { error: insertError } = await serviceClient.from("sequence_steps").insert(rows);
     if (insertError) {
       console.error("Insert steps error:", insertError);
       return { error: "Erreur lors de l'enregistrement des étapes" };
     }
   }
 
-  revalidatePath("/app/flows/prospecting");
+  revalidatePath(`/flows/prospecting/${campaignId}`);
+  revalidatePath("/flows/prospecting");
   return { success: true };
+}
+
+// ---------------------------------------------------------------------------
+// GENERATE & SAVE SEQUENCE: Use AI to generate a sequence and save it
+// ---------------------------------------------------------------------------
+export async function generateAndSaveSequence(campaignId: string): Promise<{ success?: boolean; error?: string }> {
+  const user = await getUserWithProfile();
+  if (!user || !user.profile?.client_id) return { error: "Non authentifié" };
+
+  const supabase = await createSupabaseServerClient();
+
+  // 1. Get campaign details
+  const { data: campaign, error: campError } = await supabase
+    .from("campaigns")
+    .select("*")
+    .eq("id", campaignId)
+    .single();
+
+  if (campError || !campaign) return { error: "Campagne introuvable" };
+
+  try {
+    // 2. Generate sequence with AI
+    const generated = await generateSequenceForCampaign(campaign as Campaign);
+
+    // 3. Save the steps
+    return await saveSequenceSteps(campaignId, generated.steps);
+  } catch (error: any) {
+    console.error("Error generating sequence:", error);
+    
+    // Check if it's a Zod error (which is what we see in the screenshot)
+    if (error.name === "ZodError" || (error.issues && Array.isArray(error.issues))) {
+      return { error: "L'IA a généré une séquence au format invalide. Veuillez réessayer (cela arrive parfois)." };
+    }
+    
+    return { error: error.message || "Erreur lors de la génération de la séquence" };
+  }
 }
 
 export async function deleteProspects(ids: string[]): Promise<{ success: boolean; error?: string }> {
   if (!ids || ids.length === 0) return { success: false, error: "Aucun ID fourni" };
   
+  const user = await getUserWithProfile();
+  if (!user || !user.profile?.client_id) return { success: false, error: "Non authentifié" };
+  const clientId = user.profile.client_id;
+
   const supabase = await createSupabaseServerClient();
+
+  // Fetch names before deletion for logging
+  const { data: prospects } = await supabase
+    .from("prospects")
+    .select("id, decision_maker, campaign_id")
+    .in("id", ids);
+
   const { error } = await supabase.from("prospects").delete().in("id", ids);
 
   if (error) {
@@ -417,9 +526,32 @@ export async function deleteProspects(ids: string[]): Promise<{ success: boolean
     return { success: false, error: "Erreur lors de la suppression" };
   }
 
+  // Log activities
+  if (prospects && prospects.length > 0) {
+    await logCampaignActivities(prospects.map(p => ({
+      clientId,
+      campaignId: p.campaign_id,
+      action: "prospect.deleted",
+      entityType: "prospect",
+      entityId: p.id,
+      actorType: "user",
+      metadata: {
+        prospect_name: p.decision_maker || "un prospect",
+        campaign_id: p.campaign_id
+      }
+    })));
+
+    // Revalidate specific campaign pages
+    const uniqueCampaignIds = Array.from(new Set(prospects.map(p => p.campaign_id).filter(Boolean)));
+    uniqueCampaignIds.forEach(cid => {
+      revalidatePath(`/flows/prospecting/${cid}`);
+    });
+  }
+
   revalidatePath("/flows/prospecting");
   return { success: true };
 }
+
 
 async function qualifyProspectRecord(
   supabase: any,
@@ -462,6 +594,17 @@ async function qualifyProspectRecord(
     throw new Error("Campagne introuvable");
   }
 
+  // Fetch sequence steps
+  let sequenceSteps: any[] = [];
+  if (campaign.sequence_id) {
+    const { data: steps } = await supabase
+      .from("sequence_steps")
+      .select("*")
+      .eq("sequence_id", campaign.sequence_id)
+      .order("step_order", { ascending: true });
+    sequenceSteps = steps || [];
+  }
+
   const preScore = preScoreProspect(prospect, campaign);
   const qualification = await qualifyProspectWithLLM(
     {
@@ -474,6 +617,21 @@ async function qualifyProspectRecord(
   );
 
   const finalQualificationStatus = qualification.qualification_level === "low" ? "rejected" : "qualified";
+
+  // Personalize sequence if qualified
+  let personalizedSequence = null;
+  if (finalQualificationStatus === "qualified" && sequenceSteps.length > 0) {
+    try {
+      personalizedSequence = await personalizeSequenceForProspect(
+        prospect,
+        campaign,
+        sequenceSteps,
+        qualification
+      );
+    } catch (err) {
+      console.error("Error personalizing sequence:", err);
+    }
+  }
 
   const { data: updated, error: updateError } = await supabase
     .from("prospects")
@@ -490,7 +648,15 @@ async function qualifyProspectRecord(
       qualification_status: finalQualificationStatus,
       qualification_level: qualification.qualification_level,
       qualification_reason: qualification.qualification_reason,
-      suggested_message: qualification.suggested_message,
+      extra_data: {
+        ...(prospect.extra_data || {}),
+        qualification: {
+          result: qualification,
+          personalization_hooks: qualification.personalization_hooks,
+          qualified_at: new Date().toISOString(),
+        },
+        personalized_sequence: personalizedSequence,
+      },
       status: finalQualificationStatus,
       updated_at: new Date().toISOString(),
     })
@@ -525,7 +691,6 @@ async function qualifyProspectRecord(
       qualification_status,
       qualification_level,
       qualification_reason,
-      suggested_message,
       company:companies (
         industry,
         size_range,
@@ -540,6 +705,22 @@ async function qualifyProspectRecord(
   if (updateError || !updated) {
     throw new Error("Impossible d'enregistrer la qualification");
   }
+
+  await logCampaignActivity({
+    clientId,
+    campaignId: updated.campaign_id,
+    action: "prospect.qualified",
+    entityType: "prospect",
+    entityId: updated.id,
+    actorType: "user",
+    metadata: {
+      prospect_name: updated.decision_maker || updated.full_name || "un prospect",
+      company_name: updated.company_name || null,
+      qualification_level: updated.qualification_level,
+      qualification_status: updated.qualification_status,
+      fit_score: updated.fit_score,
+    },
+  });
 
   return updated;
 }
@@ -737,4 +918,74 @@ export async function getProspectsByList(listId: string): Promise<{ data: any[] 
   
   const flattened = (data || []).map((item: any) => item.prospect).filter(Boolean);
   return { data: flattened, error: null };
+}
+
+// ---------------------------------------------------------------------------
+// UPDATE PROSPECT PERSONALIZATION: Save manual edits to the sequence
+// ---------------------------------------------------------------------------
+export async function updateProspectPersonalization(
+  prospectId: string,
+  personalizedSequence: any
+): Promise<{ success?: boolean; error?: string }> {
+  const user = await getUserWithProfile();
+  if (!user || !user.profile?.client_id) return { error: "Non authentifié" };
+
+  const supabase = await createSupabaseServerClient();
+
+  const { error } = await supabase
+    .from("prospects")
+    .update({
+      extra_data: {
+        personalized_sequence: personalizedSequence
+      }
+    })
+    .eq("id", prospectId)
+    .eq("client_id", user.profile.client_id);
+
+  if (error) {
+    console.error("Error updating personalization:", error);
+    return { error: "Impossible de sauvegarder la personnalisation" };
+  }
+
+  revalidatePath("/flows/prospecting");
+  return { success: true };
+}
+export async function bulkUpdateProspectPersonalizations(
+  updates: { prospectId: string, personalizedSequence: any }[]
+): Promise<{ success?: boolean; error?: string }> {
+  const user = await getUserWithProfile();
+  if (!user || !user.profile?.client_id) return { error: "Non authentifié" };
+
+  const supabase = await createSupabaseServerClient();
+
+  // We do multiple updates. In a production app, we'd use a RPC or a more optimized approach.
+  // For now, since it's human interaction volume, a loop is fine.
+  for (const update of updates) {
+    // 1. Fetch current extra_data to preserve other keys (like photo_url)
+    const { data: prospect } = await supabase
+      .from("prospects")
+      .select("extra_data")
+      .eq("id", update.prospectId)
+      .single();
+
+    const newExtraData = {
+      ...(prospect?.extra_data || {}),
+      personalized_sequence: update.personalizedSequence
+    };
+
+    const { error } = await supabase
+      .from("prospects")
+      .update({
+        extra_data: newExtraData
+      })
+      .eq("id", update.prospectId)
+      .eq("client_id", user.profile.client_id);
+
+    if (error) {
+      console.error(`Error updating personalization for ${update.prospectId}:`, error);
+    }
+  }
+
+  revalidatePath("/flows/prospecting");
+  return { success: true };
 }

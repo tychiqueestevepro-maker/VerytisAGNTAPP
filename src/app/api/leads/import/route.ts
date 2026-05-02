@@ -1,5 +1,6 @@
 import { createSupabaseServiceClient } from '@/lib/supabase/server';
 import { preScoreProspect } from '@/lib/prospecting/scoring';
+import { logCampaignActivities } from '@/lib/flows/activity';
 import { NextResponse } from 'next/server';
 
 const PROSPECT_PHOTOS_BUCKET = 'prospect-photos';
@@ -40,6 +41,13 @@ type LeadInput = {
   organizationMission?: string | null;
   organizationLocation?: string | null;
   organizationLinkedinUrl?: string | null;
+  currentExperience?: Record<string, unknown> | null;
+  experiences?: unknown[] | null;
+  experienceHighlights?: string[] | null;
+  personalizationSignals?: string[] | null;
+  currentRoleStart?: string | null;
+  currentRoleDuration?: string | null;
+  currentRoleIsRecent?: boolean | null;
   raw_result_text?: string | null;
   scrape_mode?: string | null;
   fast_import?: boolean | null;
@@ -358,11 +366,19 @@ export async function POST(request: Request) {
         finalPhotoUrl = await uploadPhotoToBucket(supabase, originalPhotoUrl, clientId);
       }
 
-      const fullName = lead.name || [lead.first_name, lead.last_name].filter(Boolean).join(' ') || 'Inconnu';
-      const role = lead.role || lead.role_title || lead.title || lead.headline || null;
       const organization = asRecord(lead.organization);
+      const currentExperience = asRecord(lead.currentExperience);
+      const fullName = lead.name || [lead.first_name, lead.last_name].filter(Boolean).join(' ') || 'Inconnu';
+      const role = pickString(
+        currentExperience.title,
+        lead.role,
+        lead.role_title,
+        lead.title,
+        lead.headline
+      );
       const companyName = pickString(
         organizationValue(organization, 'name'),
+        currentExperience.company,
         lead.company,
         lead.company_name
       );
@@ -386,6 +402,7 @@ export async function POST(request: Request) {
       const location = pickString(
         lead.location,
         lead.profileLocation,
+        currentExperience.location,
         companyLocation
       );
       const industry = pickString(
@@ -462,6 +479,13 @@ export async function POST(request: Request) {
           company_size: companySize,
           industry,
           company_description: companyDescription,
+          current_experience: currentExperience,
+          experiences: Array.isArray(lead.experiences) ? lead.experiences : [],
+          experience_highlights: Array.isArray(lead.experienceHighlights) ? lead.experienceHighlights : [],
+          personalization_signals: Array.isArray(lead.personalizationSignals) ? lead.personalizationSignals : [],
+          current_role_start: lead.currentRoleStart || null,
+          current_role_duration: lead.currentRoleDuration || null,
+          current_role_is_recent: Boolean(lead.currentRoleIsRecent),
           organization: {
             ...organization,
             name: companyName,
@@ -501,7 +525,7 @@ export async function POST(request: Request) {
         onConflict: 'client_id, linkedin_url',
         ignoreDuplicates: false // We want to update them or at least get the IDs
       })
-      .select('id');
+      .select('id, decision_maker, company_name, source');
 
     let finalProspects = insertedProspects || [];
 
@@ -512,7 +536,7 @@ export async function POST(request: Request) {
          const { data: retryData, error: retryError } = await supabase
            .from('prospects')
            .upsert(prospectsToInsert, { onConflict: 'linkedin_url' })
-           .select('id');
+           .select('id, decision_maker, company_name, source');
            
          if (retryError) {
             console.error('[API] Retry upsert failed:', retryError);
@@ -526,6 +550,25 @@ export async function POST(request: Request) {
 
     finalProspects = finalProspects || [];
     console.log('[API] Prospects inserted/upserted:', finalProspects.length);
+
+    await logCampaignActivities(finalProspects.map((prospect: {
+      id: string;
+      decision_maker?: string | null;
+      company_name?: string | null;
+      source?: string | null;
+    }) => ({
+      clientId,
+      campaignId,
+      action: 'prospect.imported.extension',
+      entityType: 'prospect',
+      entityId: prospect.id,
+      actorType: 'integration',
+      metadata: {
+        prospect_name: prospect.decision_maker || 'Profil LinkedIn',
+        company_name: prospect.company_name || null,
+        source: prospect.source || source || 'linkedin_extension',
+      },
+    })));
 
     // Link prospects to the list if listId is provided
     if (listId && finalProspects.length > 0) {

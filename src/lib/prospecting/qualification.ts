@@ -13,13 +13,13 @@ export type QualificationLevel = "high" | "medium" | "low";
 export interface LLMQualificationResult {
   qualification_level: QualificationLevel;
   qualification_reason: string;
-  suggested_message: string;
+  personalization_hooks: string[];
 }
 
 const QualificationResultSchema = z.object({
   qualification_level: z.enum(["high", "medium", "low"]),
   qualification_reason: z.string().min(1),
-  suggested_message: z.string().min(1),
+  personalization_hooks: z.array(z.string()).default([]),
 }).strict();
 
 const SYSTEM_PROMPT = `
@@ -67,10 +67,132 @@ function sanitizeForPrompt(value: unknown, depth = 0): unknown {
   return String(value);
 }
 
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function pickText(...values: unknown[]): string {
+  for (const value of values) {
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return "";
+}
+
+function toTextArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map(item => typeof item === "string" ? item.trim() : "")
+    .filter(Boolean)
+    .slice(0, 8);
+}
+
+function firstRecord(...values: unknown[]): Record<string, unknown> {
+  for (const value of values) {
+    const record = asRecord(value);
+    if (Object.keys(record).length > 0) return record;
+  }
+  return {};
+}
+
+function firstArray(...values: unknown[]): unknown[] {
+  for (const value of values) {
+    if (Array.isArray(value) && value.length > 0) return value.slice(0, 8);
+  }
+  return [];
+}
+
+function boolValue(...values: unknown[]): boolean {
+  return values.some(value => value === true || value === "true" || value === "yes" || value === "1");
+}
+
+function extractPersonalizationInsights(prospectInput: Record<string, unknown>) {
+  const extraData = asRecord(prospectInput.extra_data);
+  const rawData = asRecord(prospectInput.raw_data ?? extraData.raw_data);
+  const currentExperience = firstRecord(
+    prospectInput.currentExperience,
+    prospectInput.current_experience,
+    rawData.currentExperience,
+    rawData.current_experience,
+    extraData.currentExperience,
+    extraData.current_experience
+  );
+  const experiences = firstArray(
+    prospectInput.experiences,
+    rawData.experiences,
+    extraData.experiences
+  );
+  const experienceHighlights = [
+    ...toTextArray(prospectInput.experienceHighlights),
+    ...toTextArray(prospectInput.experience_highlights),
+    ...toTextArray(rawData.experienceHighlights),
+    ...toTextArray(rawData.experience_highlights),
+    ...toTextArray(extraData.experienceHighlights),
+    ...toTextArray(extraData.experience_highlights),
+  ].slice(0, 8);
+  const personalizationSignals = [
+    ...toTextArray(prospectInput.personalizationSignals),
+    ...toTextArray(prospectInput.personalization_signals),
+    ...toTextArray(rawData.personalizationSignals),
+    ...toTextArray(rawData.personalization_signals),
+    ...toTextArray(extraData.personalizationSignals),
+    ...toTextArray(extraData.personalization_signals),
+  ].slice(0, 8);
+  const currentRoleStart = pickText(
+    prospectInput.currentRoleStart,
+    prospectInput.current_role_start,
+    rawData.currentRoleStart,
+    rawData.current_role_start,
+    extraData.currentRoleStart,
+    extraData.current_role_start,
+    currentExperience.start
+  );
+  const currentRoleDuration = pickText(
+    prospectInput.currentRoleDuration,
+    prospectInput.current_role_duration,
+    rawData.currentRoleDuration,
+    rawData.current_role_duration,
+    extraData.currentRoleDuration,
+    extraData.current_role_duration,
+    currentExperience.duration
+  );
+  const currentRoleIsRecent = boolValue(
+    prospectInput.currentRoleIsRecent,
+    prospectInput.current_role_is_recent,
+    rawData.currentRoleIsRecent,
+    rawData.current_role_is_recent,
+    extraData.currentRoleIsRecent,
+    extraData.current_role_is_recent,
+    currentExperience.isRecent
+  );
+
+  const inferredSignals = [...personalizationSignals];
+  const title = pickText(currentExperience.title);
+  const company = pickText(currentExperience.company);
+  const dateRange = pickText(currentExperience.dateRange);
+
+  if (currentRoleIsRecent && inferredSignals.length === 0) {
+    inferredSignals.push(
+      ["Prise de poste récente", title, company ? `chez ${company}` : "", dateRange ? `(${dateRange})` : ""]
+        .filter(Boolean)
+        .join(" ")
+    );
+  }
+
+  return {
+    current_experience: currentExperience,
+    experiences,
+    experience_highlights: experienceHighlights,
+    personalization_signals: inferredSignals.slice(0, 8),
+    current_role_start: currentRoleStart || null,
+    current_role_duration: currentRoleDuration || null,
+    current_role_is_recent: currentRoleIsRecent,
+  };
+}
+
 export function qualificationLabel(level?: string | null): string {
-  if (level === "high") return "Qualification élevée";
-  if (level === "medium") return "Qualification moyenne";
-  if (level === "low") return "Qualification faible";
+  if (level === "high") return "ICP élevé";
+  if (level === "medium") return "ICP moyen";
+  if (level === "low") return "ICP faible";
   return "Non qualifié";
 }
 
@@ -108,6 +230,7 @@ export async function qualifyProspectWithLLM(
 ): Promise<LLMQualificationResult> {
   const campaign = normalizeCampaignCriteria(campaignInput);
   const prospect = normalizeProspectData(prospectInput);
+  const personalization = extractPersonalizationInsights(prospectInput);
   const savedLevel = prospectInput.pre_score_level === "high" || prospectInput.pre_score_level === "medium" || prospectInput.pre_score_level === "low"
     ? prospectInput.pre_score_level
     : "low";
@@ -141,6 +264,7 @@ export async function qualifyProspectWithLLM(
       source: prospect.source,
       url_profil: prospect.profileUrl,
       site_web: prospect.websiteUrl,
+      signaux_de_personnalisation: personalization,
       contexte_collecte: prospect.rawText.slice(0, TEXTUAL_CONTEXT_LIMIT),
       donnees_collectees_completes: sanitizeForPrompt(prospectInput),
     },
@@ -160,13 +284,13 @@ Sortie obligatoire :
 {
   "qualification_level": "high" | "medium" | "low",
   "qualification_reason": "max 3 phrases",
-  "suggested_message": "message court prêt à envoyer"
+  "personalization_hooks": ["faits précis utilisables pour personnaliser le message"]
 }
 
 Règles :
 - Base qualification_level sur l'adéquation entre le prospect et l'objectif de campagne.
-- Explique clairement pourquoi le prospect est adapté ou non.
-- Adapte suggested_message au ton demandé.
+- Explique clairement pourquoi le prospect est adapté ou non avec des éléments précis du profil, de l'entreprise et du parcours.
+- Si l'ancienneté, une prise de poste, une évolution interne ou une expérience passée intéressante est disponible, ajoute-la dans personalization_hooks.
 - N'invente aucune information absente.
 - Si les données sont insuffisantes, mets medium ou low et explique-le.
 `.trim();

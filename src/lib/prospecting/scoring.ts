@@ -180,8 +180,16 @@ export function normalizeCampaignCriteria(campaign: UnknownRecord | null | undef
 
 export function normalizeProspectData(prospect: UnknownRecord): NormalizedProspectData {
   const extraData = asRecord(prospect.extra_data);
-  const rawData = prospect.raw_data ?? extraData.raw_data ?? extraData;
+  const rawData = asRecord(prospect.raw_data ?? extraData.raw_data ?? extraData);
   const company = getCompany(prospect);
+  const currentExperience = asRecord(
+    prospect.currentExperience ??
+    prospect.current_experience ??
+    rawData.currentExperience ??
+    rawData.current_experience ??
+    extraData.currentExperience ??
+    extraData.current_experience
+  );
 
   const companyDescription = pickString(
     prospect.company_description,
@@ -202,10 +210,17 @@ export function normalizeProspectData(prospect: UnknownRecord): NormalizedProspe
     id: pickString(prospect.id) || undefined,
     source: pickString(prospect.source),
     fullName: pickString(prospect.full_name, prospect.decision_maker, prospect.name),
-    roleTitle: pickString(prospect.role_title, prospect.role, prospect.title, extraData.original_headline),
-    companyName: pickString(prospect.company_name, prospect.company, company.name),
+    roleTitle: pickString(currentExperience.title, prospect.role_title, prospect.role, prospect.title, extraData.original_headline),
+    companyName: pickString(prospect.company_name, prospect.company, company.name, currentExperience.company),
     companyDescription,
-    location: pickString(prospect.location, company.location, extraData.location),
+    location: pickString(
+      prospect.location,
+      company.location,
+      extraData.location,
+      rawData.profileLocation,
+      rawData.location,
+      currentExperience.location
+    ),
     profileUrl: pickString(prospect.profile_url, prospect.linkedin_url),
     websiteUrl: pickString(prospect.website_url, prospect.website),
     rawText,

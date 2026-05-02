@@ -3,6 +3,7 @@
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getUserWithProfile } from "@/lib/auth";
 import { preScoreProspect } from "@/lib/prospecting/scoring";
+import { logCampaignActivities } from "@/lib/flows/activity";
 
 type CsvProspect = Record<string, unknown>;
 
@@ -95,14 +96,29 @@ export async function importProspectsCSV(
 
   // Insert prospects. Note: Supabase JS doesn't easily do upsert by multiple columns without a unique constraint.
   // For safety, we just insert. If there are duplicates, they will be inserted again unless DB has constraint.
-  const { error } = await supabase
+  const { data: insertedProspects, error } = await supabase
     .from("prospects")
-    .insert(validProspects);
+    .insert(validProspects)
+    .select("id, decision_maker, company_name");
 
   if (error) {
     console.error("CSV Import Error:", error);
     return { success: false, error: "Erreur lors de l'insertion en base" };
   }
+
+  await logCampaignActivities((insertedProspects ?? []).map((prospect) => ({
+    clientId,
+    campaignId,
+    action: "prospect.imported.document",
+    entityType: "prospect",
+    entityId: prospect.id,
+    actorType: "user",
+    metadata: {
+      prospect_name: prospect.decision_maker || "Profil importé",
+      company_name: prospect.company_name || null,
+      source: "csv_import",
+    },
+  })));
 
   return { success: true, count: validProspects.length };
 }

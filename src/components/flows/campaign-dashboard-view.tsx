@@ -44,17 +44,26 @@ import {
   ArrowRight,
   Download,
   Send,
-  Phone
+  Phone,
+  Save,
 } from "lucide-react";
 import {
   getOrganizationProspects,
   getContactLists,
   getProspectsByList,
   qualifyProspects,
+  updateProspectPersonalization,
 } from "@/lib/flows/actions";
 import { Button } from "@/components/ui/button";
 import { SequenceBuilderModal } from "./sequence-builder";
+import { TopLine } from "@/components/layout/top-line";
+import { SectionHeading } from "@/components/layout/section-heading";
 import { cn } from "@/lib/utils";
+
+const fade = {
+  initial: { opacity: 0, y: 12 },
+  animate: { opacity: 1, y: 0 },
+};
 
 // --- Types ---
 type CampaignStatus = "active" | "paused" | "archived" | "draft";
@@ -95,10 +104,15 @@ interface Prospect {
   raw_data?: any;
   pre_score?: number | null;
   pre_score_level?: "high" | "medium" | "low" | null;
-  qualification_status?: "collected" | "pre_scored" | "to_qualify" | "qualified" | "rejected" | null;
+  qualification_status?:
+    | "collected"
+    | "pre_scored"
+    | "to_qualify"
+    | "qualified"
+    | "rejected"
+    | null;
   qualification_level?: "high" | "medium" | "low" | null;
   qualification_reason?: string | null;
-  suggested_message?: string | null;
   company?: {
     industry?: string | null;
     size_range?: string | null;
@@ -115,6 +129,9 @@ interface ActivityLog {
   entity_type: string;
   created_at: string;
   type?: string;
+  detail?: string;
+  photos?: string[];
+  count?: number;
 }
 
 // --- Icons ---
@@ -146,18 +163,41 @@ const STATUS_LABEL: Record<string, string> = {
 };
 
 const StatusDot = ({ status }: { status: string }) => {
-  if (status === "active") return <span className="flex size-2 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]"></span>;
-  if (status === "paused") return <span className="flex size-2 rounded-full bg-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.5)]"></span>;
+  if (status === "active")
+    return (
+      <span className="flex size-2 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]"></span>
+    );
+  if (status === "paused")
+    return (
+      <span className="flex size-2 rounded-full bg-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.5)]"></span>
+    );
   return <span className="flex size-2 rounded-full bg-zinc-500"></span>;
 };
 
-const ProspectAvatar = ({ name, photoUrl, colorIndex }: { name: string; photoUrl?: string | null; colorIndex: number }) => {
+const ProspectAvatar = ({
+  name,
+  photoUrl,
+  colorIndex,
+  size = "size-10",
+}: {
+  name: string;
+  photoUrl?: string | null;
+  colorIndex: number;
+  size?: string;
+}) => {
   if (photoUrl) {
     return (
-      <div className="size-10 rounded-full border border-white/10 overflow-hidden shrink-0">
-        <img src={photoUrl} alt={name} className="size-full object-cover" onError={(e) => {
-          (e.target as HTMLImageElement).style.display = 'none';
-        }} />
+      <div
+        className={`${size} rounded-full border border-white/10 overflow-hidden shrink-0 shadow-xl`}
+      >
+        <img
+          src={photoUrl}
+          alt={name}
+          className="size-full object-cover"
+          onError={(e) => {
+            (e.target as HTMLImageElement).style.display = "none";
+          }}
+        />
       </div>
     );
   }
@@ -180,8 +220,41 @@ const ProspectAvatar = ({ name, photoUrl, colorIndex }: { name: string; photoUrl
   const colorClass = colors[colorIndex % colors.length];
 
   return (
-    <div className={`size-10 rounded-full border flex items-center justify-center font-bold text-xs shrink-0 ${colorClass}`}>
+    <div
+      className={`${size} rounded-full border flex items-center justify-center font-bold text-xs shrink-0 shadow-xl ${colorClass}`}
+    >
       {initials || <User className="size-4" />}
+    </div>
+  );
+};
+
+const StackedAvatars = ({
+  photos,
+  count,
+}: {
+  photos: string[];
+  count: number;
+}) => {
+  const displayPhotos = photos.slice(0, 2);
+  return (
+    <div className="flex -space-x-4 items-center shrink-0">
+      {displayPhotos.map((url, i) => (
+        <div
+          key={i}
+          className="size-10 rounded-full border-2 border-black overflow-hidden bg-[#0c0c0c] shadow-2xl relative z-10"
+        >
+          <img
+            src={url}
+            alt={`Avatar ${i}`}
+            className="size-full object-cover"
+          />
+        </div>
+      ))}
+      {count > displayPhotos.length && (
+        <div className="size-9 rounded-full border-2 border-black bg-zinc-900 flex items-center justify-center text-[9px] font-black text-white/90 shadow-2xl relative z-0 -ml-3 pl-2 pr-1">
+          +{count - displayPhotos.length}
+        </div>
+      )}
     </div>
   );
 };
@@ -192,19 +265,22 @@ const getIcpLevel = (prospect: Prospect): IcpLevel | null => {
   return prospect.qualification_level ?? null;
 };
 
-const ICP_META: Record<IcpLevel, { label: string; shortLabel: string; className: string }> = {
+const ICP_META: Record<
+  IcpLevel,
+  { label: string; shortLabel: string; className: string }
+> = {
   high: {
-    label: "ICP élevé",
+    label: "Score ICP élevé",
     shortLabel: "Élevé",
     className: "bg-emerald-500/10 text-emerald-400 border-emerald-500/20",
   },
   medium: {
-    label: "ICP moyen",
+    label: "Score ICP moyen",
     shortLabel: "Moyen",
     className: "bg-orange-500/10 text-orange-400 border-orange-500/20",
   },
   low: {
-    label: "ICP faible",
+    label: "Score ICP faible",
     shortLabel: "Faible",
     className: "bg-red-500/10 text-red-400 border-red-500/20",
   },
@@ -221,17 +297,20 @@ const getIcpMeta = (prospect: Prospect) => {
   return level ? ICP_META[level] : EMPTY_ICP_META;
 };
 
-const QUALIFICATION_META: Record<"high" | "medium" | "low", { label: string; className: string }> = {
+const QUALIFICATION_META: Record<
+  "high" | "medium" | "low",
+  { label: string; className: string }
+> = {
   high: {
-    label: "Qualification élevée",
+    label: "Qualification ICP élevée",
     className: "bg-emerald-500/10 text-emerald-400 border-emerald-500/20",
   },
   medium: {
-    label: "Qualification moyenne",
+    label: "Qualification ICP moyenne",
     className: "bg-orange-500/10 text-orange-400 border-orange-500/20",
   },
   low: {
-    label: "Qualification faible",
+    label: "Qualification ICP faible",
     className: "bg-red-500/10 text-red-400 border-red-500/20",
   },
 };
@@ -239,17 +318,23 @@ const QUALIFICATION_META: Record<"high" | "medium" | "low", { label: string; cla
 const getQualificationMeta = (prospect: Prospect) => {
   if (!prospect.qualification_level) {
     return {
-      label: prospect.qualification_status === "to_qualify" ? "En qualification" : "Non qualifié",
+      label:
+        prospect.qualification_status === "to_qualify"
+          ? "En qualification"
+          : "Non qualifié",
       className: "bg-white/[0.03] text-white/40 border-white/10",
     };
   }
   return QUALIFICATION_META[prospect.qualification_level];
 };
 
-const normalizeProspectList = (prospects: any[]): Prospect[] => prospects.map((prospect) => ({
-  ...prospect,
-  company: Array.isArray(prospect.company) ? prospect.company[0] || null : prospect.company || null,
-}));
+const normalizeProspectList = (prospects: any[]): Prospect[] =>
+  prospects.map((prospect) => ({
+    ...prospect,
+    company: Array.isArray(prospect.company)
+      ? prospect.company[0] || null
+      : prospect.company || null,
+  }));
 
 const firstText = (...values: any[]) => {
   for (const value of values) {
@@ -273,7 +358,7 @@ const getProspectIndustry = (prospect: Prospect) => {
     prospect.company?.industry,
     prospect.extra_data?.industry,
     prospect.raw_data?.industry,
-    organization.industry
+    organization.industry,
   );
 };
 
@@ -286,7 +371,7 @@ const getProspectCompanySize = (prospect: Prospect) => {
     prospect.raw_data?.company_size,
     organization.companySize,
     organization.company_size,
-    organization.size_range
+    organization.size_range,
   );
 };
 
@@ -298,7 +383,7 @@ const getProspectLocation = (prospect: Prospect) => {
     prospect.extra_data?.location,
     prospect.raw_data?.profileLocation,
     prospect.raw_data?.location,
-    organization.location
+    organization.location,
   );
 };
 
@@ -312,7 +397,7 @@ const getProspectWebsite = (prospect: Prospect) => {
     prospect.raw_data?.companyWebsite,
     prospect.raw_data?.website_url,
     organization.website,
-    organization.website_url
+    organization.website_url,
   );
 };
 
@@ -324,7 +409,7 @@ const getProspectCompanyLinkedin = (prospect: Prospect) => {
     prospect.raw_data?.companyLinkedinUrl,
     prospect.raw_data?.organizationLinkedinUrl,
     organization.linkedin_url,
-    organization.linkedinUrl
+    organization.linkedinUrl,
   );
 };
 
@@ -337,7 +422,7 @@ const getProspectCompanyDescription = (prospect: Prospect) => {
     prospect.raw_data?.companyDescription,
     prospect.raw_data?.organizationDescription,
     organization.description,
-    organization.mission
+    organization.mission,
   );
 };
 
@@ -346,8 +431,8 @@ const getTitleAndCompany = (role: string, companyName?: string | null) => {
     return { title: "Décideur", company: companyName || "" };
   }
 
-  // Detect if the role already contains an "@" or " at " and handle it
-  const parts = role.split(/[@|•\-–]| at /i);
+  // Detect company separators without cutting hyphenated titles like "Co-founder".
+  const parts = role.split(/\s+(?:at|chez)\s+|[@|•]|\s[-–—]\s/i);
   let title = parts[0].trim();
   let company = (companyName || "").trim();
 
@@ -359,7 +444,7 @@ const getTitleAndCompany = (role: string, companyName?: string | null) => {
   // If the title ends with the company name (without separator), strip it from title
   if (company && title.toLowerCase().endsWith(company.toLowerCase())) {
     const stripped = title.substring(0, title.length - company.length).trim();
-    const cleaned = stripped.replace(/[@|•\-–·\s,:]+$/, '').trim();
+    const cleaned = stripped.replace(/[@|•\-–·\s,:]+$/, "").trim();
     if (cleaned.length >= 2) {
       title = cleaned;
     }
@@ -377,7 +462,13 @@ const getTitleAndCompany = (role: string, companyName?: string | null) => {
 // CANVAS FLOW COMPONENTS (Now in a Modal)
 // ============================================================================
 
-function CsvImportModal({ onClose, campaignId }: { onClose: () => void; campaignId: string }) {
+function CsvImportModal({
+  onClose,
+  campaignId,
+}: {
+  onClose: () => void;
+  campaignId: string;
+}) {
   const router = useRouter();
   const [isUploading, setIsUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -396,22 +487,24 @@ function CsvImportModal({ onClose, campaignId }: { onClose: () => void; campaign
         skipEmptyLines: true,
         complete: async (results) => {
           try {
-            const { createSupabaseBrowserClient } = await import("@/lib/supabase/client");
+            const { createSupabaseBrowserClient } =
+              await import("@/lib/supabase/client");
             const supabase = createSupabaseBrowserClient();
 
             // Upload to storage for archiving
             const timestamp = new Date().getTime();
             const fileName = `${campaignId}_${timestamp}.csv`;
 
-            await supabase.storage
-              .from('csv_imports')
-              .upload(fileName, file);
+            await supabase.storage.from("csv_imports").upload(fileName, file);
           } catch (storageErr) {
             console.error("Failed to archive CSV:", storageErr);
           }
 
           const { importProspectsCSV } = await import("@/lib/flows/import");
-          const res = await importProspectsCSV(campaignId, results.data as Record<string, unknown>[]);
+          const res = await importProspectsCSV(
+            campaignId,
+            results.data as Record<string, unknown>[],
+          );
           if (res.success) {
             router.refresh();
             onClose();
@@ -423,7 +516,7 @@ function CsvImportModal({ onClose, campaignId }: { onClose: () => void; campaign
         error: (err) => {
           setError("Erreur de lecture du CSV");
           setIsUploading(false);
-        }
+        },
       });
     } catch (err) {
       setError("Erreur lors de l'import");
@@ -433,24 +526,68 @@ function CsvImportModal({ onClose, campaignId }: { onClose: () => void; campaign
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
-      <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="w-full max-w-lg bg-[#0A0A0A] border border-white/10 rounded-2xl overflow-hidden flex flex-col relative shadow-2xl p-6">
+      <motion.div
+        initial={{ opacity: 0, scale: 0.95 }}
+        animate={{ opacity: 1, scale: 1 }}
+        exit={{ opacity: 0, scale: 0.95 }}
+        className="w-full max-w-lg bg-[#0A0A0A] border border-white/10 rounded-2xl overflow-hidden flex flex-col relative shadow-2xl p-6"
+      >
         <div className="flex items-center justify-between mb-6">
           <h2 className="font-semibold text-lg text-white flex items-center gap-2">
             <Upload className="size-5 text-white/70" /> Importer des contacts
           </h2>
-          <button onClick={onClose} className="p-1.5 text-white/40 hover:text-white bg-white/5 hover:bg-white/10 rounded-md transition-colors">
+          <button
+            onClick={onClose}
+            className="p-1.5 text-white/40 hover:text-white bg-white/5 hover:bg-white/10 rounded-md transition-colors"
+          >
             <X className="size-4" />
           </button>
         </div>
 
         <div className="space-y-4">
-          <p className="text-sm text-white/60">Importez un fichier CSV UTF-8. Champs recommandés : <code className="text-xs bg-white/5 px-1 py-0.5 rounded">Email</code>, <code className="text-xs bg-white/5 px-1 py-0.5 rounded">FirstName</code>, <code className="text-xs bg-white/5 px-1 py-0.5 rounded">LastName</code>, <code className="text-xs bg-white/5 px-1 py-0.5 rounded">CompanyName</code>, <code className="text-xs bg-white/5 px-1 py-0.5 rounded">LinkedInURL</code>.</p>
+          <p className="text-sm text-white/60">
+            Importez un fichier CSV UTF-8. Champs recommandés :{" "}
+            <code className="text-xs bg-white/5 px-1 py-0.5 rounded">
+              Email
+            </code>
+            ,{" "}
+            <code className="text-xs bg-white/5 px-1 py-0.5 rounded">
+              FirstName
+            </code>
+            ,{" "}
+            <code className="text-xs bg-white/5 px-1 py-0.5 rounded">
+              LastName
+            </code>
+            ,{" "}
+            <code className="text-xs bg-white/5 px-1 py-0.5 rounded">
+              CompanyName
+            </code>
+            ,{" "}
+            <code className="text-xs bg-white/5 px-1 py-0.5 rounded">
+              LinkedInURL
+            </code>
+            .
+          </p>
 
           <div className="relative border-2 border-dashed border-white/20 rounded-xl p-8 hover:border-white/40 transition-colors bg-white/[0.02] text-center cursor-pointer">
-            <input type="file" accept=".csv" onChange={handleFileUpload} disabled={isUploading} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" />
+            <input
+              type="file"
+              accept=".csv"
+              onChange={handleFileUpload}
+              disabled={isUploading}
+              className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+            />
             <div className="flex flex-col items-center justify-center pointer-events-none">
-              {isUploading ? <Loader2 className="size-8 text-emerald-500 animate-spin mb-3" /> : <Upload className="size-8 text-white/40 mb-3" />}
-              <p className="text-sm font-medium text-white">{isUploading ? "Import en cours..." : "Cliquez ou glissez un fichier CSV"}</p>
+              {isUploading ? (
+                <Loader2 className="size-8 text-emerald-500 animate-spin mb-3" />
+              ) : (
+                <Upload className="size-8 text-white/40 mb-3" />
+              )}
+              <p className="text-sm font-medium text-white">
+                {isUploading
+                  ? "Import en cours..."
+                  : "Cliquez ou glissez un fichier CSV"}
+              </p>
             </div>
           </div>
           {error && <p className="text-sm text-red-400 mt-2">{error}</p>}
@@ -460,33 +597,43 @@ function CsvImportModal({ onClose, campaignId }: { onClose: () => void; campaign
   );
 }
 
-const FLOW_STEPS = [
-  { id: "s1", type: "trigger", title: "Leads Finder Agent", subtitle: "Agent de recherche • Actif", icon: Search, color: "text-blue-400", statsText: "35 contact(s) trouvés", statsColor: "text-emerald-400", statsBg: "bg-emerald-500/10" },
-  { id: "s2", type: "action", title: "Envoyer Invitation", subtitle: "Invitation LinkedIn sans note", icon: User, color: "text-purple-400", statsText: "0 accepté", statsColor: "text-emerald-400", statsBg: "bg-emerald-500/10" },
-  { id: "w1", type: "wait", title: "1 jour(s) après", icon: Clock },
-  { id: "s3", type: "action", title: "Envoyer Message", subtitle: "AI Icebreaker • Personnalisé pour chaque contact", icon: MessageSquare, color: "text-emerald-400", statsText: "0 répondu", statsColor: "text-white/40", statsBg: "bg-white/5" },
-  { id: "w2", type: "wait", title: "2 jour(s) après", icon: Clock },
-  { id: "s4", type: "action", title: "Envoyer Message", subtitle: "Relance automatique (Step 3)", icon: MessageSquare, color: "text-amber-400", statsText: "0 répondu", statsColor: "text-white/40", statsBg: "bg-white/5" }
-];
-
-function FlowCanvasModal({ onClose, sequenceSteps }: { onClose: () => void; sequenceSteps?: any[] }) {
-  const stepsData = sequenceSteps && sequenceSteps.length > 0
-    ? sequenceSteps.map(s => ({
-        id: s.id,
-        type: s.action_type,
-        title: s.name,
-        subtitle: s.description || "",
-        icon: s.action_type === 'trigger' ? Search : s.action_type === 'wait' ? Clock : MessageSquare,
-        color: s.action_type === 'trigger' ? "text-blue-400" : s.action_type === 'wait' ? "text-amber-400" : "text-emerald-400",
-        statsText: "0",
-        statsColor: "text-white/40",
-        statsBg: "bg-white/5"
-      }))
-    : FLOW_STEPS;
+function FlowCanvasModal({
+  onClose,
+  sequenceSteps,
+}: {
+  onClose: () => void;
+  sequenceSteps?: any[];
+}) {
+  const stepsData =
+    sequenceSteps && sequenceSteps.length > 0
+      ? sequenceSteps.map((s) => ({
+          id: s.id,
+          type: s.action_type,
+          title: s.name,
+          subtitle: s.description || "",
+          icon:
+            s.action_type === "trigger"
+              ? Search
+              : s.action_type === "wait"
+                ? Clock
+                : LinkedinIcon,
+          color:
+            s.action_type === "trigger"
+              ? "text-blue-400"
+              : s.action_type === "wait"
+                ? "text-amber-400"
+                : "text-blue-400",
+          statsText: "0",
+          statsColor: "text-white/40",
+          statsBg: "bg-white/5",
+        }))
+      : [];
 
   const [zoom, setZoom] = useState(1);
   const containerRef = useRef<HTMLDivElement>(null);
-  const [editingStep, setEditingStep] = useState<typeof stepsData[0] | null>(null);
+  const [editingStep, setEditingStep] = useState<(typeof stepsData)[0] | null>(
+    null,
+  );
   const [isDragging, setIsDragging] = useState(false);
   const [startX, setStartX] = useState(0);
   const [startY, setStartY] = useState(0);
@@ -519,13 +666,13 @@ function FlowCanvasModal({ onClose, sequenceSteps }: { onClose: () => void; sequ
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
+      if (e.key === "Escape") {
         if (editingStep) setEditingStep(null);
         else onClose();
       }
     };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
   }, [onClose, editingStep]);
 
   return (
@@ -548,7 +695,10 @@ function FlowCanvasModal({ onClose, sequenceSteps }: { onClose: () => void; sequ
               <span className="size-2 rounded-full bg-emerald-500" />
               Campagne active
             </div>
-            <button onClick={onClose} className="p-2 text-white/40 hover:text-white bg-white/5 hover:bg-white/10 rounded-lg transition-colors">
+            <button
+              onClick={onClose}
+              className="p-2 text-white/40 hover:text-white bg-white/5 hover:bg-white/10 rounded-lg transition-colors"
+            >
               <X className="size-5" />
             </button>
           </div>
@@ -557,15 +707,27 @@ function FlowCanvasModal({ onClose, sequenceSteps }: { onClose: () => void; sequ
         <div className="flex-1 relative overflow-hidden" ref={containerRef}>
           <div
             className="absolute inset-0 opacity-[0.03] pointer-events-none"
-            style={{ backgroundImage: 'radial-gradient(circle at 1px 1px, white 1px, transparent 0)', backgroundSize: '40px 40px' }}
+            style={{
+              backgroundImage:
+                "radial-gradient(circle at 1px 1px, white 1px, transparent 0)",
+              backgroundSize: "40px 40px",
+            }}
           />
 
           <div className="absolute bottom-6 left-6 flex items-center gap-1 p-1 bg-white/5 border border-white/10 rounded-lg backdrop-blur-md z-10">
-            <button onClick={() => setZoom(z => Math.max(0.5, z - 0.1))} className="p-2 hover:bg-white/10 rounded-md text-white/60 hover:text-white transition-colors">
+            <button
+              onClick={() => setZoom((z) => Math.max(0.5, z - 0.1))}
+              className="p-2 hover:bg-white/10 rounded-md text-white/60 hover:text-white transition-colors"
+            >
               <ZoomOut className="size-4" />
             </button>
-            <span className="text-xs font-mono w-12 text-center text-white/60">{Math.round(zoom * 100)}%</span>
-            <button onClick={() => setZoom(z => Math.min(1.5, z + 0.1))} className="p-2 hover:bg-white/10 rounded-md text-white/60 hover:text-white transition-colors">
+            <span className="text-xs font-mono w-12 text-center text-white/60">
+              {Math.round(zoom * 100)}%
+            </span>
+            <button
+              onClick={() => setZoom((z) => Math.min(1.5, z + 0.1))}
+              className="p-2 hover:bg-white/10 rounded-md text-white/60 hover:text-white transition-colors"
+            >
               <ZoomIn className="size-4" />
             </button>
           </div>
@@ -581,34 +743,67 @@ function FlowCanvasModal({ onClose, sequenceSteps }: { onClose: () => void; sequ
               >
                 <div className="flex items-center justify-between mb-8">
                   <h3 className="font-semibold text-white flex items-center gap-3">
-                    <div className={`p-2 rounded-lg bg-[#111] border border-white/5 ${editingStep.color}`}>
-                      {editingStep.icon && <editingStep.icon className="size-4" />}
+                    <div
+                      className={`p-2 rounded-lg bg-[#111] border border-white/5 ${editingStep.color}`}
+                    >
+                      {editingStep.icon && (
+                        <editingStep.icon className="size-4" />
+                      )}
                     </div>
                     Éditer l'étape
                   </h3>
-                  <button onClick={() => setEditingStep(null)} className="p-1.5 hover:bg-white/10 rounded-md text-white/40 hover:text-white transition-colors">
+                  <button
+                    onClick={() => setEditingStep(null)}
+                    className="p-1.5 hover:bg-white/10 rounded-md text-white/40 hover:text-white transition-colors"
+                  >
                     <X className="size-4" />
                   </button>
                 </div>
 
                 <div className="flex-1 space-y-6 overflow-y-auto pr-2">
                   <div>
-                    <label className="text-xs text-white/50 uppercase tracking-wider mb-2 block font-medium">Titre de l'action</label>
-                    <input className="w-full bg-[#111] border border-white/10 rounded-lg px-4 py-2.5 text-sm text-white focus:outline-none focus:border-white/30 transition-colors" defaultValue={editingStep.title} />
+                    <label className="text-xs text-white/50 uppercase tracking-wider mb-2 block font-medium">
+                      Titre de l'action
+                    </label>
+                    <input
+                      className="w-full bg-[#111] border border-white/10 rounded-lg px-4 py-2.5 text-sm text-white focus:outline-none focus:border-white/30 transition-colors"
+                      defaultValue={editingStep.title}
+                    />
                   </div>
                   <div>
-                    <label className="text-xs text-white/50 uppercase tracking-wider mb-2 block font-medium">Description interne</label>
-                    <input className="w-full bg-[#111] border border-white/10 rounded-lg px-4 py-2.5 text-sm text-white focus:outline-none focus:border-white/30 transition-colors" defaultValue={editingStep.subtitle} />
+                    <label className="text-xs text-white/50 uppercase tracking-wider mb-2 block font-medium">
+                      Description interne
+                    </label>
+                    <input
+                      className="w-full bg-[#111] border border-white/10 rounded-lg px-4 py-2.5 text-sm text-white focus:outline-none focus:border-white/30 transition-colors"
+                      defaultValue={editingStep.subtitle}
+                    />
                   </div>
                   <div className="p-4 rounded-xl border border-blue-500/20 bg-blue-500/5">
-                    <p className="text-sm text-blue-400 font-medium mb-1">Configuration de l'agent IA</p>
-                    <p className="text-xs text-white/60">Cette étape est gérée dynamiquement par le moteur. Modifiez les prompts dans la section Configuration Agent.</p>
+                    <p className="text-sm text-blue-400 font-medium mb-1">
+                      Configuration de l'agent IA
+                    </p>
+                    <p className="text-xs text-white/60">
+                      Cette étape est gérée dynamiquement par le moteur.
+                      Modifiez les prompts dans la section Configuration Agent.
+                    </p>
                   </div>
                 </div>
 
                 <div className="pt-6 border-t border-white/10 mt-auto flex gap-3">
-                  <Button variant="outline" onClick={() => setEditingStep(null)} className="flex-1 bg-transparent border-white/10 text-white hover:bg-white/5">Annuler</Button>
-                  <Button onClick={() => setEditingStep(null)} className="flex-1 bg-white text-black hover:bg-white/90">Sauvegarder</Button>
+                  <Button
+                    variant="outline"
+                    onClick={() => setEditingStep(null)}
+                    className="flex-1 bg-transparent border-white/10 text-white hover:bg-white/5"
+                  >
+                    Annuler
+                  </Button>
+                  <Button
+                    onClick={() => setEditingStep(null)}
+                    className="flex-1 bg-white text-black hover:bg-white/90"
+                  >
+                    Sauvegarder
+                  </Button>
                 </div>
               </motion.div>
             )}
@@ -616,7 +811,7 @@ function FlowCanvasModal({ onClose, sequenceSteps }: { onClose: () => void; sequ
 
           <div
             className="absolute inset-0 overflow-auto flex flex-col items-center py-20 select-none"
-            style={{ cursor: isDragging ? 'grabbing' : 'grab' }}
+            style={{ cursor: isDragging ? "grabbing" : "grab" }}
             ref={containerRef}
             onMouseDown={handleMouseDown}
             onMouseMove={handleMouseMove}
@@ -633,49 +828,78 @@ function FlowCanvasModal({ onClose, sequenceSteps }: { onClose: () => void; sequ
                 Début de séquence
               </div>
 
-              {stepsData.map((step, i) => {
-                const isLast = i === stepsData.length - 1;
-                return (
-                  <div key={step.id} className="flex flex-col items-center">
-                    {step.type === 'wait' || step.type === 'condition' ? (
-                      <div className={`z-10 px-4 py-1.5 rounded-full text-xs font-medium border flex items-center gap-2 bg-[#0A0A0A] ${step.type === 'wait' ? 'text-amber-400 border-amber-500/30' : 'text-purple-400 border-purple-500/30'}`}>
-                        {step.icon && <step.icon className="size-3" />} {step.title}
-                      </div>
-                    ) : (
-                      <div className="z-10 w-[500px] bg-[#0c0c0c] border border-white/10 rounded-2xl p-5 shadow-xl hover:border-white/20 transition-colors">
-                        <div className="flex justify-between items-start mb-5">
-                          <div className="flex items-center gap-3.5">
-                            <div className={`p-2.5 rounded-xl bg-[#111] border border-white/5 ${step.color}`}>
-                              {step.icon && <step.icon className="size-5" />}
-                            </div>
-                            <div>
-                              <h3 className="text-white text-sm font-medium">{step.title}</h3>
-                              <p className="text-xs text-white/40 mt-0.5">{step.subtitle}</p>
-                            </div>
-                          </div>
-                          <button onClick={() => setEditingStep(step)} className="text-xs font-medium text-blue-400 hover:text-blue-300 flex items-center gap-1.5 transition-colors px-2 py-1 rounded-md hover:bg-blue-500/10">
-                            Éditer <Edit2 className="size-3" />
-                          </button>
+              {stepsData.length > 0 ? (
+                stepsData.map((step, i) => {
+                  const isLast = i === stepsData.length - 1;
+                  return (
+                    <div key={step.id} className="flex flex-col items-center">
+                      {step.type === "wait" || step.type === "condition" ? (
+                        <div
+                          className={`z-10 px-4 py-1.5 rounded-full text-xs font-medium border flex items-center gap-2 bg-[#0A0A0A] ${step.type === "wait" ? "text-amber-400 border-amber-500/30" : "text-purple-400 border-purple-500/30"}`}
+                        >
+                          {step.icon && <step.icon className="size-3" />}{" "}
+                          {step.title}
                         </div>
-                        <div className="flex items-center justify-between pt-4 border-t border-white/5">
-                          <div className={`flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-md ${step.statsBg} ${step.statsColor}`}>
-                            <CheckCircle2 className="size-3.5" /> {step.statsText}
+                      ) : (
+                        <div className="z-10 w-[500px] bg-[#0c0c0c] border border-white/10 rounded-2xl p-5 shadow-xl hover:border-white/20 transition-colors">
+                          <div className="flex justify-between items-start mb-5">
+                            <div className="flex items-center gap-3.5">
+                              <div
+                                className={`p-2.5 rounded-xl bg-[#111] border border-white/5 ${step.color}`}
+                              >
+                                {step.icon && <step.icon className="size-5" />}
+                              </div>
+                              <div>
+                                <h3 className="text-white text-sm font-medium">
+                                  {step.title}
+                                </h3>
+                                <p className="text-xs text-white/40 mt-0.5">
+                                  {step.subtitle}
+                                </p>
+                              </div>
+                            </div>
+                            <button
+                              onClick={() => setEditingStep(step)}
+                              className="text-xs font-medium text-blue-400 hover:text-blue-300 flex items-center gap-1.5 transition-colors px-2 py-1 rounded-md hover:bg-blue-500/10"
+                            >
+                              Éditer <Edit2 className="size-3" />
+                            </button>
                           </div>
-                          <div className="text-xs text-white/40 flex items-center gap-1.5">
-                            <User className="size-3.5" /> 0 contact(s)
+                          <div className="flex items-center justify-between pt-4 border-t border-white/5">
+                            <div
+                              className={`flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-md ${step.statsBg} ${step.statsColor}`}
+                            >
+                              <CheckCircle2 className="size-3.5" />{" "}
+                              {step.statsText}
+                            </div>
+                            <div className="text-xs text-white/40 flex items-center gap-1.5">
+                              <User className="size-3.5" /> 0 contact(s)
+                            </div>
                           </div>
                         </div>
-                      </div>
-                    )}
-                    {!isLast && (
-                      <div className="w-px h-10 bg-gradient-to-b from-white/20 to-white/20 relative">
-                        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 size-1.5 rounded-full bg-white/10" />
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-              <div className="mt-6 size-3 rounded-full border-2 border-white/20 bg-[#0A0A0A]" />
+                      )}
+                      {!isLast && (
+                        <div className="w-px h-10 bg-gradient-to-b from-white/20 to-white/20 relative">
+                          <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 size-1.5 rounded-full bg-white/10" />
+                        </div>
+                      )}
+                    </div>
+                  );
+                })
+              ) : (
+                <div className="flex flex-col items-center justify-center py-20 text-white/20">
+                  <Zap className="size-16 mb-6 opacity-20" />
+                  <h3 className="text-xl font-bold text-white/40 uppercase tracking-[0.2em]">
+                    Séquence Vide
+                  </h3>
+                  <p className="text-sm text-white/20 mt-2">
+                    Utilisez le Sequence Builder pour générer votre flow.
+                  </p>
+                </div>
+              )}
+              {stepsData.length > 0 && (
+                <div className="mt-6 size-3 rounded-full border-2 border-white/20 bg-[#0A0A0A]" />
+              )}
             </motion.div>
           </div>
         </div>
@@ -684,14 +908,28 @@ function FlowCanvasModal({ onClose, sequenceSteps }: { onClose: () => void; sequ
   );
 }
 
-function SettingsModal({ onClose, campaignName, campaign }: { onClose: () => void; campaignName: string; campaign: Campaign }) {
+function SettingsModal({
+  onClose,
+  campaignName,
+  campaign,
+}: {
+  onClose: () => void;
+  campaignName: string;
+  campaign: Campaign;
+}) {
   const router = useRouter();
-  const [activeTab, setActiveTab] = useState<'config' | 'prospection' | 'injection'>('prospection');
+  const [activeTab, setActiveTab] = useState<
+    "config" | "prospection" | "injection"
+  >("prospection");
   const [isSaving, setIsSaving] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
 
-  const [localProspectsPerDay, setLocalProspectsPerDay] = useState(campaign.config?.prospection?.prospects_per_day || 20);
-  const [localSearchTime, setLocalSearchTime] = useState(campaign.config?.prospection?.search_time || "09:00");
+  const [localProspectsPerDay, setLocalProspectsPerDay] = useState(
+    campaign.config?.prospection?.prospects_per_day || 20,
+  );
+  const [localSearchTime, setLocalSearchTime] = useState(
+    campaign.config?.prospection?.search_time || "09:00",
+  );
 
   const handleSave = async () => {
     setIsSaving(true);
@@ -699,8 +937,8 @@ function SettingsModal({ onClose, campaignName, campaign }: { onClose: () => voi
     const result = await updateCampaignConfig(campaign.id, {
       prospection: {
         prospects_per_day: localProspectsPerDay,
-        search_time: localSearchTime
-      }
+        search_time: localSearchTime,
+      },
     });
 
     if (result.success) {
@@ -713,11 +951,16 @@ function SettingsModal({ onClose, campaignName, campaign }: { onClose: () => voi
   };
 
   const handleDelete = async () => {
-    if (!confirm("Êtes-vous sûr de vouloir supprimer cette campagne ? Cette action est irréversible.")) return;
+    if (
+      !confirm(
+        "Êtes-vous sûr de vouloir supprimer cette campagne ? Cette action est irréversible.",
+      )
+    )
+      return;
 
     setIsDeleting(true);
-    const { setCampaignStatus } = await import("@/lib/flows/actions");
-    const result = await setCampaignStatus(campaign.id, "archived");
+    const { deleteCampaign } = await import("@/lib/flows/actions");
+    const result = await deleteCampaign(campaign.id);
 
     if (result.success) {
       router.push("/flows/prospecting");
@@ -741,11 +984,16 @@ function SettingsModal({ onClose, campaignName, campaign }: { onClose: () => voi
               <Settings className="size-5 text-white/70" />
             </div>
             <div>
-              <h2 className="font-semibold text-xl text-white">Paramètres de la campagne</h2>
+              <h2 className="font-semibold text-xl text-white">
+                Paramètres de la campagne
+              </h2>
               <p className="text-sm text-white/40">{campaignName}</p>
             </div>
           </div>
-          <button onClick={onClose} className="p-2 text-white/40 hover:text-white bg-white/5 hover:bg-white/10 rounded-lg transition-colors">
+          <button
+            onClick={onClose}
+            className="p-2 text-white/40 hover:text-white bg-white/5 hover:bg-white/10 rounded-lg transition-colors"
+          >
             <X className="size-5" />
           </button>
         </div>
@@ -753,9 +1001,9 @@ function SettingsModal({ onClose, campaignName, campaign }: { onClose: () => voi
         <div className="flex-1 flex overflow-hidden">
           <div className="w-64 border-r border-white/10 bg-[#070707] p-4 flex flex-col gap-2 shrink-0">
             {[
-              { id: 'config', label: 'Configuration', icon: Edit2 },
-              { id: 'prospection', label: 'Prospection', icon: Search },
-              { id: 'injection', label: 'Injection', icon: Zap },
+              { id: "config", label: "Configuration", icon: Edit2 },
+              { id: "prospection", label: "Prospection", icon: Search },
+              { id: "injection", label: "Injection", icon: Zap },
             ].map((tab) => (
               <button
                 key={tab.id}
@@ -774,83 +1022,166 @@ function SettingsModal({ onClose, campaignName, campaign }: { onClose: () => voi
 
           <div className="flex-1 overflow-y-auto p-8 bg-[#0A0A0A]">
             <AnimatePresence mode="wait">
-              {activeTab === 'config' && (
-                <motion.div key="config" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} className="space-y-8">
+              {activeTab === "config" && (
+                <motion.div
+                  key="config"
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -10 }}
+                  className="space-y-8"
+                >
                   <section className="space-y-6">
                     <h3 className="text-xs font-bold text-white/40 uppercase tracking-[0.2em] flex items-center gap-2">
-                      <span className="size-1.5 rounded-full bg-blue-400" /> Identité & Objectif
+                      <span className="size-1.5 rounded-full bg-blue-400" />{" "}
+                      Identité & Objectif
                     </h3>
                     <div className="grid gap-6 p-6 rounded-2xl bg-white/[0.02] border border-white/5">
                       <div className="space-y-2">
-                        <label className="text-xs text-white/30 uppercase tracking-wider font-medium">Nom de la campagne</label>
-                        <p className="text-sm text-white font-medium">{campaignName}</p>
+                        <label className="text-xs text-white/30 uppercase tracking-wider font-medium">
+                          Nom de la campagne
+                        </label>
+                        <p className="text-sm text-white font-medium">
+                          {campaignName}
+                        </p>
                       </div>
                       <div className="space-y-2">
-                        <label className="text-xs text-white/30 uppercase tracking-wider font-medium">Objectif principal</label>
-                        <p className="text-sm text-white/70 leading-relaxed">Génération de rendez-vous qualifiés pour l'offre d'Agents IA autonomes.</p>
+                        <label className="text-xs text-white/30 uppercase tracking-wider font-medium">
+                          Objectif principal
+                        </label>
+                        <p className="text-sm text-white/70 leading-relaxed">
+                          Génération de rendez-vous qualifiés pour l'offre
+                          d'Agents IA autonomes.
+                        </p>
                       </div>
                     </div>
                   </section>
                 </motion.div>
               )}
 
-              {activeTab === 'prospection' && (
-                <motion.div key="prospection" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} className="space-y-12">
+              {activeTab === "prospection" && (
+                <motion.div
+                  key="prospection"
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -10 }}
+                  className="space-y-12"
+                >
                   <section className="space-y-8">
                     <h3 className="text-xs font-bold text-white/40 uppercase tracking-[0.2em] flex items-center gap-2">
-                      <span className="size-1.5 rounded-full bg-blue-400" /> 🎯 Prospection & Cible
+                      <span className="size-1.5 rounded-full bg-blue-400" /> 🎯
+                      Prospection & Cible
                     </h3>
 
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                       <div className="p-6 rounded-2xl bg-white/[0.02] border border-white/5 space-y-4">
-                        <label className="text-xs text-white/30 uppercase tracking-wider font-medium">Secteurs & Taille</label>
+                        <label className="text-xs text-white/30 uppercase tracking-wider font-medium">
+                          Secteurs & Taille
+                        </label>
                         <div className="flex flex-wrap gap-2">
-                          {(campaign.config?.target_icp?.sectors || ['Non défini']).map((s: string) => (
-                            <span key={s} className="px-2.5 py-1 rounded-md bg-emerald-500/10 border border-emerald-500/20 text-[10px] text-emerald-400 font-medium">{s}</span>
+                          {(
+                            campaign.config?.target_icp?.sectors || [
+                              "Non défini",
+                            ]
+                          ).map((s: string) => (
+                            <span
+                              key={s}
+                              className="px-2.5 py-1 rounded-md bg-emerald-500/10 border border-emerald-500/20 text-[10px] text-emerald-400 font-medium"
+                            >
+                              {s}
+                            </span>
                           ))}
                         </div>
                       </div>
                       <div className="p-6 rounded-2xl bg-white/[0.02] border border-white/5 space-y-4">
-                        <label className="text-xs text-white/30 uppercase tracking-wider font-medium">Géographie</label>
+                        <label className="text-xs text-white/30 uppercase tracking-wider font-medium">
+                          Géographie
+                        </label>
                         <div className="flex flex-wrap gap-2">
-                          {(campaign.config?.target_icp?.locations || ['Non défini']).map((t: string) => (
-                            <span key={t} className="px-3 py-1.5 rounded-lg bg-white/5 border border-white/10 text-xs text-white/70">{t}</span>
+                          {(
+                            campaign.config?.target_icp?.locations || [
+                              "Non défini",
+                            ]
+                          ).map((t: string) => (
+                            <span
+                              key={t}
+                              className="px-3 py-1.5 rounded-lg bg-white/5 border border-white/10 text-xs text-white/70"
+                            >
+                              {t}
+                            </span>
                           ))}
                         </div>
                       </div>
                       <div className="p-6 rounded-2xl bg-white/[0.02] border border-white/5 space-y-4">
-                        <label className="text-xs text-white/30 uppercase tracking-wider font-medium">Décideurs ciblés</label>
+                        <label className="text-xs text-white/30 uppercase tracking-wider font-medium">
+                          Décideurs ciblés
+                        </label>
                         <div className="flex flex-wrap gap-2">
-                          {(campaign.config?.personas || ['Non défini']).map((p: string) => (
-                            <span key={p} className="px-2.5 py-1 rounded-md bg-purple-500/10 border border-purple-500/20 text-[10px] text-purple-400 font-medium">{p}</span>
-                          ))}
+                          {(campaign.config?.personas || ["Non défini"]).map(
+                            (p: string) => (
+                              <span
+                                key={p}
+                                className="px-2.5 py-1 rounded-md bg-purple-500/10 border border-purple-500/20 text-[10px] text-purple-400 font-medium"
+                              >
+                                {p}
+                              </span>
+                            ),
+                          )}
                         </div>
                       </div>
                       <div className="p-6 rounded-2xl bg-white/[0.02] border border-white/5 space-y-4">
-                        <label className="text-xs text-white/30 uppercase tracking-wider font-medium">IA & Ton</label>
-                        <p className="text-sm text-white/70 font-medium">{campaign.config?.tone || "Professionnel"}</p>
+                        <label className="text-xs text-white/30 uppercase tracking-wider font-medium">
+                          IA & Ton
+                        </label>
+                        <p className="text-sm text-white/70 font-medium">
+                          {campaign.config?.tone || "Professionnel"}
+                        </p>
                       </div>
                     </div>
 
                     <div className="pt-8 border-t border-white/5 space-y-8">
                       <div className="flex items-center justify-between p-4 rounded-xl bg-blue-500/5 border border-blue-500/20">
                         <div className="space-y-1">
-                          <p className="text-sm font-semibold text-white">Mode Automatique</p>
-                          <p className="text-xs text-white/40">L'agent prospecte quotidiennement selon l'heure définie.</p>
+                          <p className="text-sm font-semibold text-white">
+                            Mode Automatique
+                          </p>
+                          <p className="text-xs text-white/40">
+                            L'agent prospecte quotidiennement selon l'heure
+                            définie.
+                          </p>
                         </div>
-                        <div className={`w-12 h-6 rounded-full border relative cursor-pointer transition-colors ${campaign.config?.prospection?.mode === 'auto' ? 'bg-blue-500/20 border-blue-500/40' : 'bg-white/5 border-white/10'}`}>
-                          <div className={`absolute top-1 size-4 rounded-full shadow-[0_0_8px_rgba(59,130,246,0.5)] transition-all ${campaign.config?.prospection?.mode === 'auto' ? 'right-1 bg-blue-500' : 'left-1 bg-white/20'}`} />
+                        <div
+                          className={`w-12 h-6 rounded-full border relative cursor-pointer transition-colors ${campaign.config?.prospection?.mode === "auto" ? "bg-blue-500/20 border-blue-500/40" : "bg-white/5 border-white/10"}`}
+                        >
+                          <div
+                            className={`absolute top-1 size-4 rounded-full shadow-[0_0_8px_rgba(59,130,246,0.5)] transition-all ${campaign.config?.prospection?.mode === "auto" ? "right-1 bg-blue-500" : "left-1 bg-white/20"}`}
+                          />
                         </div>
                       </div>
 
                       <div className="grid grid-cols-2 gap-8">
                         <div className="space-y-4">
-                          <p className="text-xs text-white/30 uppercase tracking-wider font-medium">Prospects par jour :</p>
-                          <input type="number" value={localProspectsPerDay} onChange={(e) => setLocalProspectsPerDay(parseInt(e.target.value))} className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-blue-500/50" />
+                          <p className="text-xs text-white/30 uppercase tracking-wider font-medium">
+                            Prospects par jour :
+                          </p>
+                          <input
+                            type="number"
+                            value={localProspectsPerDay}
+                            onChange={(e) =>
+                              setLocalProspectsPerDay(parseInt(e.target.value))
+                            }
+                            className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-blue-500/50"
+                          />
                         </div>
                         <div className="space-y-4">
-                          <p className="text-xs text-white/30 uppercase tracking-wider font-medium">Heure de recherche :</p>
-                          <input type="time" value={localSearchTime} onChange={(e) => setLocalSearchTime(e.target.value)} className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-blue-500/50" />
+                          <p className="text-xs text-white/30 uppercase tracking-wider font-medium">
+                            Heure de recherche :
+                          </p>
+                          <input
+                            type="time"
+                            value={localSearchTime}
+                            onChange={(e) => setLocalSearchTime(e.target.value)}
+                            className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-blue-500/50"
+                          />
                         </div>
                       </div>
                     </div>
@@ -858,44 +1189,103 @@ function SettingsModal({ onClose, campaignName, campaign }: { onClose: () => voi
                 </motion.div>
               )}
 
-              {activeTab === 'injection' && (
-                <motion.div key="injection" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} className="space-y-12">
+              {activeTab === "injection" && (
+                <motion.div
+                  key="injection"
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -10 }}
+                  className="space-y-12"
+                >
                   <section>
-                    <h3 className="text-xs font-bold text-white/40 uppercase tracking-[0.2em] mb-8">📥 Injection</h3>
+                    <h3 className="text-xs font-bold text-white/40 uppercase tracking-[0.2em] mb-8">
+                      📥 Injection
+                    </h3>
                     <div className="space-y-10">
                       <div>
-                        <p className="text-sm font-medium text-white mb-4">Que faire des prospects trouvés ?</p>
+                        <p className="text-sm font-medium text-white mb-4">
+                          Que faire des prospects trouvés ?
+                        </p>
                         <div className="space-y-3">
-                          <label className={`flex items-center gap-3 p-4 rounded-xl border cursor-pointer group transition-all ${campaign.config?.injection?.auto_add ? 'border-emerald-500/20 bg-emerald-500/5' : 'border-white/5 bg-white/[0.02]'}`}>
-                            <input type="radio" name="injection" checked={campaign.config?.injection?.auto_add} readOnly className="size-4 accent-emerald-500" />
+                          <label
+                            className={`flex items-center gap-3 p-4 rounded-xl border cursor-pointer group transition-all ${campaign.config?.injection?.auto_add ? "border-emerald-500/20 bg-emerald-500/5" : "border-white/5 bg-white/[0.02]"}`}
+                          >
+                            <input
+                              type="radio"
+                              name="injection"
+                              checked={campaign.config?.injection?.auto_add}
+                              readOnly
+                              className="size-4 accent-emerald-500"
+                            />
                             <div>
-                              <p className="text-sm text-white font-medium">Ajouter automatiquement à la campagne</p>
-                              <p className="text-xs text-white/40 mt-0.5">L'IA lance la séquence immédiatement après la découverte.</p>
+                              <p className="text-sm text-white font-medium">
+                                Ajouter automatiquement à la campagne
+                              </p>
+                              <p className="text-xs text-white/40 mt-0.5">
+                                L'IA lance la séquence immédiatement après la
+                                découverte.
+                              </p>
                             </div>
                           </label>
-                          <label className={`flex items-center gap-3 p-4 rounded-xl border cursor-pointer group transition-all ${!campaign.config?.injection?.auto_add ? 'border-emerald-500/20 bg-emerald-500/5' : 'border-white/5 bg-white/[0.02]'}`}>
-                            <input type="radio" name="injection" checked={!campaign.config?.injection?.auto_add} readOnly className="size-4 accent-emerald-500" />
+                          <label
+                            className={`flex items-center gap-3 p-4 rounded-xl border cursor-pointer group transition-all ${!campaign.config?.injection?.auto_add ? "border-emerald-500/20 bg-emerald-500/5" : "border-white/5 bg-white/[0.02]"}`}
+                          >
+                            <input
+                              type="radio"
+                              name="injection"
+                              checked={!campaign.config?.injection?.auto_add}
+                              readOnly
+                              className="size-4 accent-emerald-500"
+                            />
                             <div>
-                              <p className="text-sm text-white/70 font-medium group-hover:text-white transition-colors">Valider avant ajout</p>
-                              <p className="text-xs text-white/40 mt-0.5">Les prospects restent en attente dans l'onglet de validation.</p>
+                              <p className="text-sm text-white/70 font-medium group-hover:text-white transition-colors">
+                                Valider avant ajout
+                              </p>
+                              <p className="text-xs text-white/40 mt-0.5">
+                                Les prospects restent en attente dans l'onglet
+                                de validation.
+                              </p>
                             </div>
                           </label>
                         </div>
                       </div>
                       <div className="space-y-4 pt-6 border-t border-white/5">
-                        <p className="text-sm font-medium text-white">Options :</p>
+                        <p className="text-sm font-medium text-white">
+                          Options :
+                        </p>
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                           <label className="flex items-center gap-3 p-4 rounded-xl bg-white/[0.02] border border-white/5 opacity-50 cursor-not-allowed">
                             <div className="flex items-center justify-center size-5 rounded border border-white/20 bg-white/5">
-                              <input type="checkbox" checked={campaign.config?.injection?.ignore_duplicates} readOnly className="size-4 accent-blue-500" />
+                              <input
+                                type="checkbox"
+                                checked={
+                                  campaign.config?.injection?.ignore_duplicates
+                                }
+                                readOnly
+                                className="size-4 accent-blue-500"
+                              />
                             </div>
-                            <span className="text-sm text-white/70">Ignorer les doublons</span>
+                            <span className="text-sm text-white/70">
+                              Ignorer les doublons
+                            </span>
                           </label>
-                          <label className={`flex items-center gap-3 p-4 rounded-xl border cursor-pointer hover:bg-white/5 transition-colors ${campaign.config?.injection?.prioritize_linkedin ? 'bg-blue-500/5 border-blue-500/20' : 'bg-white/[0.02] border-white/5'}`}>
+                          <label
+                            className={`flex items-center gap-3 p-4 rounded-xl border cursor-pointer hover:bg-white/5 transition-colors ${campaign.config?.injection?.prioritize_linkedin ? "bg-blue-500/5 border-blue-500/20" : "bg-white/[0.02] border-white/5"}`}
+                          >
                             <div className="flex items-center justify-center size-5 rounded border border-white/20 bg-white/5">
-                              <input type="checkbox" checked={campaign.config?.injection?.prioritize_linkedin} readOnly className="size-4 accent-blue-500" />
+                              <input
+                                type="checkbox"
+                                checked={
+                                  campaign.config?.injection
+                                    ?.prioritize_linkedin
+                                }
+                                readOnly
+                                className="size-4 accent-blue-500"
+                              />
                             </div>
-                            <span className="text-sm text-white/70">Prioriser les prospects avec LinkedIn</span>
+                            <span className="text-sm text-white/70">
+                              Prioriser les prospects avec LinkedIn
+                            </span>
                           </label>
                         </div>
                       </div>
@@ -908,14 +1298,35 @@ function SettingsModal({ onClose, campaignName, campaign }: { onClose: () => voi
         </div>
 
         <div className="p-6 border-t border-white/10 bg-[#050505] flex justify-between items-center shrink-0">
-          <Button variant="ghost" onClick={handleDelete} disabled={isDeleting} className="text-red-500 hover:text-red-400 hover:bg-red-500/10 px-4 gap-2">
-            {isDeleting ? <Loader2 className="size-4 animate-spin" /> : <X className="size-4" />}
+          <Button
+            variant="ghost"
+            onClick={handleDelete}
+            disabled={isDeleting}
+            className="text-red-500 hover:text-red-400 hover:bg-red-500/10 px-4 gap-2"
+          >
+            {isDeleting ? (
+              <Loader2 className="size-4 animate-spin" />
+            ) : (
+              <X className="size-4" />
+            )}
             Supprimer la campagne
           </Button>
           <div className="flex gap-3">
-            <Button variant="outline" onClick={onClose} className="bg-transparent border-white/10 text-white hover:bg-white/5 px-8">Annuler</Button>
-            <Button onClick={handleSave} disabled={isSaving} className="bg-white text-black hover:bg-white/90 px-8 font-bold min-w-[140px]">
-              {isSaving ? <Loader2 className="size-4 animate-spin mr-2" /> : null}
+            <Button
+              variant="outline"
+              onClick={onClose}
+              className="bg-transparent border-white/10 text-white hover:bg-white/5 px-8"
+            >
+              Annuler
+            </Button>
+            <Button
+              onClick={handleSave}
+              disabled={isSaving}
+              className="bg-white text-black hover:bg-white/90 px-8 font-bold min-w-[140px]"
+            >
+              {isSaving ? (
+                <Loader2 className="size-4 animate-spin mr-2" />
+              ) : null}
               Enregistrer
             </Button>
           </div>
@@ -933,7 +1344,7 @@ export function CampaignDashboardView({
   campaign,
   prospects: initialProspects,
   activities,
-  sequenceSteps
+  sequenceSteps,
 }: {
   campaign: Campaign;
   prospects: Prospect[];
@@ -942,15 +1353,55 @@ export function CampaignDashboardView({
 }) {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const currentView = searchParams.get('view');
+  const currentView = searchParams.get("view");
 
-  const isFlowModalOpen = currentView === 'flow';
-  const isProspectsModalOpen = currentView === 'contacts';
-  const isSettingsOpen = currentView === 'settings';
+  const isFlowModalOpen = currentView === "flow";
+  const isProspectsModalOpen = currentView === "contacts";
+  const isSettingsOpen = currentView === "settings";
 
-  const [selectedProspect, setSelectedProspect] = useState<Prospect | null>(null);
+  const [selectedProspect, setSelectedProspect] = useState<Prospect | null>(
+    null,
+  );
+  const [editingSequence, setEditingSequence] = useState<any>(null);
+
+  useEffect(() => {
+    if (selectedProspect?.extra_data?.personalized_sequence) {
+      setEditingSequence(selectedProspect.extra_data.personalized_sequence);
+    } else {
+      setEditingSequence(null);
+    }
+  }, [selectedProspect]);
+
+  const handleUpdateSequenceStep = (index: number, newMessage: string) => {
+    if (!editingSequence) return;
+    const newSteps = [...editingSequence.steps];
+    newSteps[index] = { ...newSteps[index], personalized_message: newMessage };
+    setEditingSequence({ ...editingSequence, steps: newSteps });
+  };
+
+  const handleSavePersonalization = async () => {
+    if (!selectedProspect || !editingSequence) return;
+    const res = await updateProspectPersonalization(
+      selectedProspect.id,
+      editingSequence,
+    );
+    if (res.success) {
+      // Update local prospect data
+      setSelectedProspect({
+        ...selectedProspect,
+        extra_data: {
+          ...selectedProspect.extra_data,
+          personalized_sequence: editingSequence,
+        },
+      });
+    } else {
+      alert(res.error || "Erreur lors de la sauvegarde");
+    }
+  };
   const [isCsvModalOpen, setIsCsvModalOpen] = useState(false);
-  const [activeProspectTab, setActiveProspectTab] = useState<"campaign" | "lists" | "all">("campaign");
+  const [activeProspectTab, setActiveProspectTab] = useState<
+    "campaign" | "lists" | "all"
+  >("campaign");
   const [searchQuery, setSearchQuery] = useState("");
   const [filterStep, setFilterStep] = useState<string>("all");
   const [filterIcp, setFilterIcp] = useState<string>("all");
@@ -960,23 +1411,27 @@ export function CampaignDashboardView({
   const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc");
   const [contactLists, setContactLists] = useState<any[]>([]);
   const [selectedListId, setSelectedListId] = useState<string | null>(null);
-  const [displayProspects, setDisplayProspects] = useState<any[]>(initialProspects);
+  const [displayProspects, setDisplayProspects] =
+    useState<any[]>(initialProspects);
   const [isLoadingProspects, setIsLoadingProspects] = useState(false);
 
   // Re-sync displayProspects when initialProspects changes
   useEffect(() => {
-    const filtered = initialProspects.filter(p => {
-      const matchesSearch = !searchQuery ||
+    const filtered = initialProspects.filter((p) => {
+      const matchesSearch =
+        !searchQuery ||
         p.decision_maker?.toLowerCase().includes(searchQuery.toLowerCase()) ||
         p.company_name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
         p.email?.toLowerCase().includes(searchQuery.toLowerCase());
 
-      const matchesStep = filterStep === "all" || getStepLabel(p.status) === filterStep;
+      const matchesStep =
+        filterStep === "all" || getStepLabel(p.status) === filterStep;
 
       const pIcp = getIcpLevel(p);
       const matchesIcp = filterIcp === "all" || pIcp === filterIcp;
 
-      const matchesEmail = filterEmail === "all" || (filterEmail === "has" ? !!p.email : !p.email);
+      const matchesEmail =
+        filterEmail === "all" || (filterEmail === "has" ? !!p.email : !p.email);
 
       return matchesSearch && matchesStep && matchesIcp && matchesEmail;
     });
@@ -985,25 +1440,39 @@ export function CampaignDashboardView({
       let valA: any = a[sortBy as keyof Prospect];
       let valB: any = b[sortBy as keyof Prospect];
 
-      if (sortBy === 'step') {
-        const stepOrder: Record<string, number> = { 'Step 1': 1, 'Step 2': 2, 'Step 3': 3, 'End': 4 };
+      if (sortBy === "step") {
+        const stepOrder: Record<string, number> = {
+          "Step 1": 1,
+          "Step 2": 2,
+          "Step 3": 3,
+          End: 4,
+        };
         valA = stepOrder[getStepLabel(a.status)] || 0;
         valB = stepOrder[getStepLabel(b.status)] || 0;
-      } else if (sortBy === 'pre_score') {
+      } else if (sortBy === "pre_score") {
         valA = getIcpLevel(a) ? (a.fit_score ?? a.pre_score ?? 0) : -1;
         valB = getIcpLevel(b) ? (b.fit_score ?? b.pre_score ?? 0) : -1;
-      } else if (sortBy === 'created_at') {
+      } else if (sortBy === "created_at") {
         valA = new Date(a.created_at || 0).getTime();
         valB = new Date(b.created_at || 0).getTime();
       }
 
-      if (valA < valB) return sortOrder === 'asc' ? -1 : 1;
-      if (valA > valB) return sortOrder === 'asc' ? 1 : -1;
+      if (valA < valB) return sortOrder === "asc" ? -1 : 1;
+      if (valA > valB) return sortOrder === "asc" ? 1 : -1;
       return 0;
     });
 
     setDisplayProspects(sorted);
-  }, [initialProspects, activeProspectTab, searchQuery, filterStep, filterIcp, filterEmail, sortBy, sortOrder]);
+  }, [
+    initialProspects,
+    activeProspectTab,
+    searchQuery,
+    filterStep,
+    filterIcp,
+    filterEmail,
+    sortBy,
+    sortOrder,
+  ]);
 
   // Fetch data based on active tab
   useEffect(() => {
@@ -1024,8 +1493,10 @@ export function CampaignDashboardView({
             }
           }
           if (selectedListId) {
-            const { data: listProspects, error: listError } = await getProspectsByList(selectedListId);
-            if (!listError && listProspects) setDisplayProspects(normalizeProspectList(listProspects));
+            const { data: listProspects, error: listError } =
+              await getProspectsByList(selectedListId);
+            if (!listError && listProspects)
+              setDisplayProspects(normalizeProspectList(listProspects));
           } else {
             setDisplayProspects([]);
           }
@@ -1040,11 +1511,18 @@ export function CampaignDashboardView({
     };
 
     fetchData();
-  }, [activeProspectTab, isProspectsModalOpen, selectedListId, initialProspects]);
+  }, [
+    activeProspectTab,
+    isProspectsModalOpen,
+    selectedListId,
+    initialProspects,
+  ]);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [isDeleting, setIsDeleting] = useState(false);
   const [qualifyingIds, setQualifyingIds] = useState<string[]>([]);
-  const [campaignName, setCampaignName] = useState(campaign.display_name || "Campagne Sans Nom");
+  const [campaignName, setCampaignName] = useState(
+    campaign.display_name || "Campagne Sans Nom",
+  );
   const [isEditingName, setIsEditingName] = useState(false);
   const nameInputRef = useRef<HTMLInputElement>(null);
 
@@ -1065,33 +1543,38 @@ export function CampaignDashboardView({
   const updateUrlView = (view: string | null) => {
     const params = new URLSearchParams(searchParams.toString());
     if (view) {
-      params.set('view', view);
+      params.set("view", view);
     } else {
-      params.delete('view');
+      params.delete("view");
     }
     router.push(`?${params.toString()}`, { scroll: false });
   };
 
   const toggleFlowModal = (open: boolean) => {
-    updateUrlView(open ? 'flow' : null);
+    updateUrlView(open ? "flow" : null);
   };
 
   const toggleProspectsModal = (open: boolean) => {
-    updateUrlView(open ? 'contacts' : null);
+    updateUrlView(open ? "contacts" : null);
   };
 
   const toggleSettingsModal = (open: boolean) => {
-    updateUrlView(open ? 'settings' : null);
+    updateUrlView(open ? "settings" : null);
   };
 
   const getStepLabel = (status: string) => {
     switch (status) {
-      case 'discovered':
-      case 'qualified': return 'Step 1';
-      case 'contacted': return 'Step 2';
-      case 'replied': return 'Step 3';
-      case 'converted': return 'End';
-      default: return 'Step 1';
+      case "discovered":
+      case "qualified":
+        return "Step 1";
+      case "contacted":
+        return "Step 2";
+      case "replied":
+        return "Step 3";
+      case "converted":
+        return "End";
+      default:
+        return "Step 1";
     }
   };
 
@@ -1110,7 +1593,10 @@ export function CampaignDashboardView({
   };
 
   const handleDelete = async (ids: string[]) => {
-    if (!confirm(`Êtes-vous sûr de vouloir supprimer ${ids.length} contact(s) ?`)) return;
+    if (
+      !confirm(`Êtes-vous sûr de vouloir supprimer ${ids.length} contact(s) ?`)
+    )
+      return;
     setIsDeleting(true);
     const { deleteProspects } = await import("@/lib/flows/actions");
     const res = await deleteProspects(ids);
@@ -1124,7 +1610,9 @@ export function CampaignDashboardView({
   };
 
   const toggleSelectAll = () => {
-    const currentList = isProspectsModalOpen ? displayProspects : initialProspects;
+    const currentList = isProspectsModalOpen
+      ? displayProspects
+      : initialProspects;
     if (selectedIds.length === currentList.length) {
       setSelectedIds([]);
     } else {
@@ -1133,7 +1621,9 @@ export function CampaignDashboardView({
   };
 
   const toggleSelectOne = (id: string) => {
-    setSelectedIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+    setSelectedIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
+    );
   };
 
   const patchProspects = (updatedProspects: Prospect[]) => {
@@ -1141,15 +1631,17 @@ export function CampaignDashboardView({
     const normalized = normalizeProspectList(updatedProspects);
     const byId = new Map(normalized.map((prospect) => [prospect.id, prospect]));
 
-    setDisplayProspects((prev) => prev.map((prospect) => {
-      const updated = byId.get(prospect.id);
-      return updated ? { ...prospect, ...updated } : prospect;
-    }));
+    setDisplayProspects((prev) =>
+      prev.map((prospect) => {
+        const updated = byId.get(prospect.id);
+        return updated ? { ...prospect, ...updated } : prospect;
+      }),
+    );
 
     setSelectedProspect((prev) => {
       if (!prev) return prev;
       const updated = byId.get(prev.id);
-      return updated ? { ...prev, ...updated } as Prospect : prev;
+      return updated ? ({ ...prev, ...updated } as Prospect) : prev;
     });
   };
 
@@ -1180,341 +1672,357 @@ export function CampaignDashboardView({
 
   return (
     <div className="flex flex-col min-h-[calc(100vh-64px)] w-full bg-black text-white font-sans overflow-y-auto">
-
-      {/* HEADER */}
-      {!isProspectsModalOpen && (
-        <header className="shrink-0 border-b border-white/10 px-8 py-5 flex items-center justify-between bg-[#050505] sticky top-0 z-20">
-          <div className="flex items-center gap-6">
-            <Button variant="ghost" size="sm" className="text-white/40 hover:text-white px-0 hover:bg-transparent" onClick={() => router.push("/flows/prospecting")}>
-              <ArrowLeft className="size-4 mr-2" /> Retour aux campagnes
-            </Button>
-            <div className="h-6 w-px bg-white/10" />
-            <div className="flex items-center gap-3 group">
-              {isEditingName ? (
-                <input ref={nameInputRef} value={campaignName} onChange={(e) => setCampaignName(e.target.value)} onBlur={() => setIsEditingName(false)} onKeyDown={(e) => e.key === 'Enter' && setIsEditingName(false)} className="bg-white/5 border border-white/20 rounded-md px-3 py-1 text-lg font-semibold text-white focus:outline-none focus:border-white/40 w-64" />
-              ) : (
-                <h1 className="text-2xl font-bold flex items-center gap-2 cursor-pointer group-hover:text-white/90 transition-colors" onClick={() => setIsEditingName(true)}>
-                  {campaignName}
-                  <Edit2 className="size-4 text-white/0 group-hover:text-white/40 transition-colors" />
-                </h1>
-              )}
-              <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-white/5 border border-white/10 ml-2">
-                <StatusDot status={campaign.status} />
-                <span className="text-xs text-white/60 capitalize">{STATUS_LABEL[campaign.status] || campaign.status}</span>
-              </div>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-4">
-            <Button onClick={toggleStatus} disabled={isStatusLoading} className={`gap-2 font-medium border min-w-[140px] ${isPaused ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20 hover:bg-emerald-500/20" : "bg-amber-500/10 text-amber-400 border-amber-500/20 hover:bg-amber-500/20"}`}>
-              {isStatusLoading ? <Loader2 className="size-4 animate-spin" /> : isPaused ? <Play className="size-4" /> : <Pause className="size-4" />}
-              {isPaused ? "Activer" : "Mettre en pause"}
-            </Button>
-            <div className="h-6 w-px bg-white/10" />
-            <Button onClick={() => toggleSettingsModal(true)} className="bg-white/10 hover:bg-white/20 text-white gap-2 border border-white/10 font-medium">
-              <Settings className="size-4" /> Paramètres
-            </Button>
-          </div>
-        </header>
-      )}
+      <TopLine />
 
       {/* DASHBOARD CONTENT */}
-      <div className="p-8 w-full space-y-8">
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          <div className="md:col-span-2 p-5 rounded-2xl border border-white/10 bg-white/[0.01] flex flex-col">
-            <div className="flex items-center justify-between mb-5">
-              <div>
-                <h3 className="font-semibold text-base text-white">Performances</h3>
-                <p className="text-[10px] text-white/40 uppercase tracking-widest mt-0.5">Live Analytics</p>
-              </div>
-              <div className="px-2 py-0.5 rounded-full bg-emerald-500/5 border border-emerald-500/10 text-[9px] text-emerald-400 font-bold uppercase tracking-widest">
-                En direct
-              </div>
-            </div>
-
-            {/* KPI Cards Row */}
-            <div className="grid grid-cols-3 gap-3 mb-6">
-              <div className="p-3 rounded-xl bg-white/[0.02] border border-white/5 flex flex-col justify-center">
-                <p className="text-[9px] text-white/30 uppercase tracking-widest mb-1 font-bold">Prospects</p>
-                <p className="text-xl font-bold text-white">{initialProspects.length}</p>
-              </div>
-              <div className="p-3 rounded-xl bg-white/[0.02] border border-white/5 flex flex-col justify-center">
-                <p className="text-[9px] text-white/30 uppercase tracking-widest mb-1 font-bold">Contactés</p>
-                <p className="text-xl font-bold text-amber-400">
-                  {initialProspects.filter((p: Prospect) => ['contacted', 'replied', 'converted'].includes(p.status)).length}
+      <div className="p-8 w-full space-y-20">
+        <motion.section {...fade} className="ml-0 max-w-6xl">
+          <div className="flex flex-wrap items-end gap-x-12 gap-y-9 md:gap-x-16">
+            {[
+              ["Total Prospects", initialProspects.length],
+              [
+                "Contactés",
+                initialProspects.filter((p: Prospect) =>
+                  ["contacted", "replied", "converted"].includes(p.status),
+                ).length,
+              ],
+              [
+                "Réponses",
+                initialProspects.filter((p: Prospect) =>
+                  ["replied", "converted"].includes(p.status),
+                ).length,
+              ],
+              ["Statut", STATUS_LABEL[campaign.status] || campaign.status],
+            ].map(([label, value], index) => (
+              <div key={label}>
+                <p className="mb-2 text-[11px] uppercase tracking-[0.2em] text-white/34">
+                  {label}
+                </p>
+                <p className="text-5xl font-semibold leading-none tracking-normal text-white md:text-7xl">
+                  {value}
                 </p>
               </div>
-              <div className="p-3 rounded-xl bg-white/[0.02] border border-white/5 flex flex-col justify-center">
-                <p className="text-[9px] text-white/30 uppercase tracking-widest mb-1 font-bold">Réponses</p>
-                <p className="text-xl font-bold text-emerald-400">
-                  {initialProspects.filter((p: Prospect) => ['replied', 'converted'].includes(p.status)).length}
-                </p>
-              </div>
-            </div>
-
-            <div className="space-y-4">
-              <div className="space-y-2">
-                <div className="flex justify-between items-end">
-                  <span className="text-xs font-medium text-white/60">Identification</span>
-                  <span className="text-xs font-bold text-white">{initialProspects.length}</span>
-                </div>
-                <div className="h-2 bg-white/5 rounded-full overflow-hidden">
-                  <motion.div initial={{ width: 0 }} animate={{ width: initialProspects.length > 0 ? "100%" : "0%" }} className="h-full bg-blue-500/50 rounded-full" />
-                </div>
-              </div>
-
-              <div className="space-y-2">
-                {(() => {
-                  const contacted = initialProspects.filter((p: Prospect) => ['contacted', 'replied', 'converted'].includes(p.status)).length;
-                  const percent = initialProspects.length > 0 ? (contacted / initialProspects.length) * 100 : 0;
-                  return (
-                    <>
-                      <div className="flex justify-between items-end">
-                        <span className="text-xs font-medium text-white/60">Messages envoyés</span>
-                        <span className="text-xs font-bold text-amber-400">{Math.round(percent)}%</span>
-                      </div>
-                      <div className="h-2 bg-white/5 rounded-full overflow-hidden">
-                        <motion.div initial={{ width: 0 }} animate={{ width: `${percent}%` }} className="h-full bg-amber-500/50 rounded-full" />
-                      </div>
-                    </>
-                  );
-                })()}
-              </div>
-
-              <div className="space-y-2">
-                {(() => {
-                  const replied = initialProspects.filter((p: Prospect) => ['replied', 'converted'].includes(p.status)).length;
-                  const percent = initialProspects.length > 0 ? (replied / initialProspects.length) * 100 : 0;
-                  return (
-                    <>
-                      <div className="flex justify-between items-end">
-                        <span className="text-xs font-medium text-white/60">Taux de réponse</span>
-                        <span className="text-xs font-bold text-emerald-400">{Math.round(percent)}%</span>
-                      </div>
-                      <div className="h-2 bg-white/5 rounded-full overflow-hidden">
-                        <motion.div initial={{ width: 0 }} animate={{ width: `${percent}%` }} className="h-full bg-emerald-500/50 rounded-full" />
-                      </div>
-                    </>
-                  );
-                })()}
-              </div>
-            </div>
+            ))}
           </div>
+        </motion.section>
 
-          <div onClick={() => toggleFlowModal(true)} className="p-5 rounded-2xl border border-white/10 bg-[#0c0c0c] hover:bg-[#111] transition-all flex flex-col relative overflow-hidden group cursor-pointer">
-            <div className="relative z-10 flex flex-col h-full">
-              <div className="flex items-center justify-between mb-4">
-                <div className="flex items-center gap-3">
-                  <div className="p-2 rounded-lg bg-emerald-500/10 text-emerald-400">
-                    <Zap className="size-5" />
-                  </div>
-                  <h3 className="font-bold text-lg">Structure du Flow</h3>
-                </div>
-                <Maximize2 className="size-5 text-white/40 group-hover:text-white transition-colors" />
-              </div>
-              <p className="text-sm text-white/40 mb-4">{sequenceSteps?.length || FLOW_STEPS.length} étapes configurées.</p>
-              <div className="flex-1 bg-black/40 border border-white/5 rounded-xl flex flex-col items-center p-3 gap-2 relative group-hover:border-white/10 transition-colors overflow-hidden">
-                <div className="absolute inset-0 opacity-[0.03]" style={{ backgroundImage: 'radial-gradient(circle at 1px 1px, white 1px, transparent 0)', backgroundSize: '12px 12px' }} />
-                <div className="flex flex-col items-center gap-1 scale-[0.8] origin-top relative z-10">
-                  {(sequenceSteps && sequenceSteps.length > 0 ? sequenceSteps : FLOW_STEPS).slice(0, 3).map((step, i) => (
-                    <div key={`glimpse-${i}`} className="flex flex-col items-center">
-                      <div className={`px-3 py-1 rounded-md border border-white/10 text-[9px] font-medium flex items-center gap-2 min-w-[120px] ${step.type === 'action' || step.action_type === 'action' || step.type === 'trigger' || step.action_type === 'trigger' ? 'bg-[#1a1a1a] text-white' : 'bg-amber-500/10 text-amber-500 border-amber-500/20'}`}>
-                        {(step.icon || step.action_type === 'trigger' ? Search : step.action_type === 'wait' ? Clock : MessageSquare) && <Search className="size-3" />}
-                        <span className="truncate">{step.title || step.name}</span>
-                      </div>
-                      {i < 2 && <div className="w-px h-2 bg-white/10" />}
-                    </div>
-                  ))}
-                  <div className="w-px h-2 bg-white/10" />
-                  <div className="size-1.5 rounded-full bg-white/20" />
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div className="grid grid-cols-1 xl:grid-cols-3 gap-8">
-          <div className="xl:col-span-2">
-            <div className="flex flex-col 2xl:flex-row 2xl:items-center justify-between mb-6 gap-4">
-              <div className="flex items-center justify-between w-full 2xl:w-auto">
-                <h2 className="text-xl font-semibold flex items-center gap-2 shrink-0">
-                  <User className="size-5 text-white/40" /> Contacts de la campagne
-                </h2>
+        <div className="flex flex-col gap-16 lg:flex-row lg:items-start lg:gap-20">
+          <motion.section
+            {...fade}
+            transition={{ delay: 0.06 }}
+            className="w-full pt-3 lg:w-[62%]"
+          >
+            <div className="flex items-center justify-between mb-8">
+              <SectionHeading>Contacts</SectionHeading>
+              <div className="flex items-center gap-4">
+                <Button
+                  onClick={toggleStatus}
+                  disabled={isStatusLoading}
+                  className={`h-9 gap-2 text-xs font-bold border transition-all ${isPaused ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20 hover:bg-emerald-500/20" : "bg-amber-500/10 text-amber-400 border-amber-500/20 hover:bg-amber-500/20"}`}
+                >
+                  {isStatusLoading ? (
+                    <Loader2 className="size-3.5 animate-spin" />
+                  ) : isPaused ? (
+                    <Play className="size-3.5" />
+                  ) : (
+                    <Pause className="size-3.5" />
+                  )}
+                  {isPaused ? "Relancer l'IA" : "Mettre en pause l'IA"}
+                </Button>
                 <button
                   onClick={() => toggleProspectsModal(true)}
-                  className="p-2 hover:bg-white/5 rounded-lg transition-colors group/zoom 2xl:ml-2"
+                  className="p-2 hover:bg-white/5 rounded-lg transition-colors group/zoom"
                   title="Agrandir la liste"
                 >
                   <Maximize2 className="size-4 text-white/20 group-hover/zoom:text-white transition-colors" />
                 </button>
               </div>
-              <div className="flex flex-wrap items-center gap-3">
-              </div>
             </div>
 
-            <div className="bg-[#050505] border border-[#1F1F1F] rounded-2xl overflow-hidden shadow-2xl">
-              <table className="w-full text-left text-sm relative">
-                <thead className={`bg-[#080808] border-b border-[#1F1F1F] text-white/20 text-[10px] uppercase tracking-[0.2em] font-bold sticky top-0 ${isProspectsModalOpen ? 'z-10' : 'z-30'}`}>
-                  <tr>
-                    <th className="pl-6 py-4 font-bold">Prospect</th>
-                    <th className="px-6 py-4 font-bold text-center w-32">Step</th>
-                    <th className="px-6 py-4 font-bold text-center w-40">ICP</th>
-                    <th className="px-6 py-4 font-bold text-right w-44"></th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-white/5">
-                  {displayProspects.length === 0 ? (
-                    <tr><td colSpan={4} className="px-6 py-8 text-center text-white/40">Aucun contact trouvé.</td></tr>
-                  ) : (
-                    displayProspects.slice(0, 6).map((p: Prospect, i: number) => {
-                      const isSelected = selectedIds.includes(p.id);
-                      const icpMeta = getIcpMeta(p);
-                      const isQualifying = qualifyingIds.includes(p.id);
-                      return (
-                        <tr key={p.id} className={`hover:bg-white/[0.02] transition-colors group cursor-pointer border-b border-white/5 last:border-0 ${isSelected ? "bg-blue-500/5" : ""}`}>
-                          <td className="px-6 py-4">
-                            <div className="flex items-center gap-4">
-                            <ProspectAvatar name={p.decision_maker || p.company_name} photoUrl={p.photo_url} colorIndex={i} />
-                            <div>
-                              <p className="font-bold text-[15px] text-white group-hover:text-blue-400 transition-colors flex items-center gap-2">
-                                {p.decision_maker ? (p.decision_maker.split(/[,|•]/)[0].split(/\s-\s/)[0].trim()) : "Inconnu"}
-                                {p.linkedin_url && (
-                                  <a
-                                    href={p.linkedin_url}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    onClick={(e) => e.stopPropagation()}
-                                    className="text-white/20 hover:text-[#0077b5] transition-all hover:scale-110 active:scale-95"
-                                  >
-                                    <LinkedinIcon className="size-3.5" />
-                                  </a>
-                                )}
-                              </p>
-                              {(() => {
-                                const { title, company } = getTitleAndCompany(p.role, p.company_name);
-                                return (
-                                  <div className="flex flex-col mt-0.5">
-                                    <p className="text-[11px] text-white/60 font-medium leading-tight">
-                                      {title}
-                                    </p>
-                                    {company && (
-                                      <p className="text-[10px] text-white/30 font-medium leading-tight mt-0.5">
-                                        @ {company}
-                                      </p>
-                                    )}
-                                  </div>
-                                );
-                              })()}
-                            </div>
-                          </div>
-                        </td>
-                        <td className="px-6 py-4 text-center w-32">
-                          <span className={cn(
-                            "px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider border inline-block w-20",
-                            p.status === 'converted'
-                              ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
-                              : "bg-blue-500/10 text-blue-400 border-blue-500/20"
-                          )}>
-                            {getStepLabel(p.status)}
-                          </span>
-                        </td>
-                        <td className="px-6 py-4 text-center w-40">
-                          <span className={cn(
-                            "px-3 py-1 rounded-md text-[10px] font-bold border inline-block min-w-[92px]",
-                            icpMeta.className
-                          )}>
-                            {icpMeta.shortLabel}
-                          </span>
-                        </td>
-                        <td className="px-6 py-4 text-right w-44">
-                          <div className="flex items-center justify-end gap-2">
-                            <Button
-                              onClick={(e) => { e.stopPropagation(); handleQualify([p.id]); }}
-                              disabled={isQualifying}
-                              className="h-8 px-3 rounded-lg bg-white/10 hover:bg-white/15 text-white border border-white/10 text-[11px] font-bold gap-2 shrink-0"
-                            >
-                              {isQualifying ? <Loader2 className="size-3.5 animate-spin" /> : <CheckCircle2 className="size-3.5" />}
-                              Qualifier
-                            </Button>
-                            <button
-                              onClick={(e) => { e.stopPropagation(); setSelectedProspect(p); toggleProspectsModal(true); }}
-                              className="size-8 flex items-center justify-center hover:bg-white/5 rounded-lg text-white/20 hover:text-white transition-all group/btn shrink-0"
-                            >
-                              <Plus className="size-4 group-hover/btn:rotate-90 transition-transform duration-300" />
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })
-                )}
-                </tbody>
-              </table>
-            </div>
-          </div>
-
-          <div className="xl:col-span-1">
-            <div className="flex items-center justify-between mb-6">
-              <h2 className="text-xl font-semibold flex items-center gap-2">
-                <Activity className="size-5 text-white/40" /> Activité Récente
-              </h2>
-              <span className="text-[10px] font-bold text-white/20 uppercase tracking-widest">Logs</span>
-            </div>
-            <div className="bg-white/[0.02] border border-white/10 rounded-2xl p-6 min-h-[400px] max-h-[600px] overflow-y-auto">
-              {activities.length === 0 ? (
-                <div className="flex flex-col items-center justify-center h-full py-12 text-center">
-                  <div className="size-12 rounded-full bg-white/5 flex items-center justify-center mb-4">
-                    <Clock className="size-6 text-white/20" />
-                  </div>
-                  <p className="text-sm text-white/40">Aucune activité enregistrée.</p>
-                  <p className="text-xs text-white/20 mt-1">Les actions apparaîtront ici.</p>
+            <div className="divide-y divide-[#1F1F1F]">
+              {displayProspects.length === 0 ? (
+                <div className="py-12 text-center">
+                  <p className="text-sm text-white/30 italic">
+                    Aucun contact trouvé dans cette campagne.
+                  </p>
                 </div>
               ) : (
-                <div className="space-y-8 relative before:absolute before:inset-0 before:ml-[19px] before:-translate-x-px before:h-full before:w-0.5 before:bg-white/5">
-                  {activities.map((act) => (
-                    <div key={act.id} className="relative flex items-start gap-4">
-                      <div className="flex items-center justify-center w-10 h-10 rounded-full border border-white/10 bg-[#0c0c0c] shrink-0 relative z-10 text-white/40 shadow-xl">
-                        {act.type?.includes('message') || act.type?.includes('outreach') ? <Send className="size-4" /> :
-                         act.type?.includes('response') ? <MessageSquare className="size-4" /> :
-                         act.type?.includes('qa') || act.type?.includes('validation') ? <CheckCircle2 className="size-4" /> :
-                         <Zap className="size-4" />}
-                      </div>
-                      <div className="flex-1 pt-1.5">
-                        <div className="flex items-center justify-between gap-2 mb-1">
-                          <p className="text-sm font-medium text-white/90 leading-snug">
-                            {act.action}
+                displayProspects.slice(0, 6).map((p: Prospect, i: number) => {
+                  const icpMeta = getIcpMeta(p);
+                  const isQualifying = qualifyingIds.includes(p.id);
+                  const { title, company } = getTitleAndCompany(
+                    p.role,
+                    p.company_name,
+                  );
+                  return (
+                    <div
+                      key={p.id}
+                      onClick={() => {
+                        setSelectedProspect(p);
+                        toggleProspectsModal(true);
+                      }}
+                      className="group flex items-center justify-between gap-8 py-6 transition duration-300 hover:pl-3 hover:bg-white/[0.018] cursor-pointer"
+                    >
+                      <div className="flex items-center gap-5">
+                        <ProspectAvatar
+                          name={p.decision_maker || p.company_name}
+                          photoUrl={p.photo_url}
+                          colorIndex={i}
+                          size="size-12"
+                        />
+                        <div className="min-w-0">
+                          <p className="text-lg font-medium text-white group-hover:text-blue-400 transition-colors truncate">
+                            {p.decision_maker
+                              ? p.decision_maker
+                                  .split(/[,|•]/)[0]
+                                  .split(/\s-\s/)[0]
+                                  .trim()
+                              : "Inconnu"}
                           </p>
-                          <span className="text-[10px] text-white/20 font-mono whitespace-nowrap">
-                            {new Date(act.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+                          <div className="flex flex-col mt-0.5 min-w-0">
+                            <p className="text-sm text-white/40 truncate">
+                              {title}
+                            </p>
+                            {company && (
+                              <p className="text-[11px] text-white/20 truncate">
+                                {company}
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-12 shrink-0">
+                        <div className="hidden md:flex flex-col items-center">
+                          <p className="text-[10px] text-white/20 uppercase tracking-widest mb-1.5 font-bold">
+                            Step
+                          </p>
+                          <span
+                            className={cn(
+                              "px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider border",
+                              p.status === "converted"
+                                ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
+                                : "bg-blue-500/10 text-blue-400 border-blue-500/20",
+                            )}
+                          >
+                            {getStepLabel(p.status)}
                           </span>
                         </div>
-                        <p className="text-xs text-white/40 leading-relaxed">
-                          {act.type?.includes('message') || act.type?.includes('outreach') ? 'Le message a été transmis avec succès via LinkedIn.' :
-                           act.type?.includes('qa') ? 'Les critères de qualité ont été vérifiés par l\'IA.' :
-                           'Action de campagne effectuée avec succès.'}
-                        </p>
+                        <div className="hidden sm:flex flex-col items-center">
+                          <p className="text-[10px] text-white/20 uppercase tracking-widest mb-1.5 font-bold">
+                            ICP
+                          </p>
+                          <span
+                            className={cn(
+                              "px-2.5 py-1 rounded-md text-[10px] font-bold border",
+                              icpMeta.className,
+                            )}
+                          >
+                            {icpMeta.shortLabel}
+                          </span>
+                        </div>
+                        <Button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleQualify([p.id]);
+                          }}
+                          disabled={isQualifying}
+                          className="size-10 rounded-full bg-white/5 hover:bg-white/10 text-white border border-white/10 flex items-center justify-center p-0 transition-all active:scale-90"
+                        >
+                          {isQualifying ? (
+                            <Loader2 className="size-4 animate-spin" />
+                          ) : (
+                            <CheckCircle2 className="size-4" />
+                          )}
+                        </Button>
                       </div>
                     </div>
-                  ))}
+                  );
+                })
+              )}
+              {displayProspects.length > 6 && (
+                <div className="py-8 text-center">
+                  <button
+                    onClick={() => toggleProspectsModal(true)}
+                    className="text-[10px] font-bold text-white/20 hover:text-white uppercase tracking-[0.2em] transition-colors flex items-center gap-2 mx-auto"
+                  >
+                    Voir tous les prospects ({displayProspects.length}){" "}
+                    <ChevronRight className="size-3" />
+                  </button>
                 </div>
               )}
             </div>
+          </motion.section>
+
+          <div className="w-full space-y-16 lg:w-[34%]">
+            <motion.section
+              {...fade}
+              transition={{ delay: 0.1 }}
+              className="pt-3"
+            >
+              <div className="flex items-center justify-between mb-8">
+                <SectionHeading>Séquence</SectionHeading>
+                <button
+                  onClick={() => toggleFlowModal(true)}
+                  className="text-xs font-bold text-white/40 hover:text-white transition-colors flex items-center gap-2"
+                >
+                  Éditer <Edit2 className="size-3" />
+                </button>
+              </div>
+              <div
+                onClick={() => toggleFlowModal(true)}
+                className="p-6 rounded-2xl border border-white/5 bg-white/[0.015] hover:bg-white/[0.025] transition-all group cursor-pointer relative overflow-hidden"
+              >
+                <div
+                  className="absolute inset-0 opacity-[0.03]"
+                  style={{
+                    backgroundImage:
+                      "radial-gradient(circle at 1px 1px, white 1px, transparent 0)",
+                    backgroundSize: "12px 12px",
+                  }}
+                />
+                <div className="relative z-10">
+                  {sequenceSteps && sequenceSteps.length > 0 ? (
+                    <div className="space-y-4">
+                      {sequenceSteps.slice(0, 4).map((step, i) => (
+                        <div
+                          key={`glimpse-${i}`}
+                          className="flex items-center gap-4"
+                        >
+                          <div
+                            className={`p-2 rounded-lg bg-white/5 border border-white/5 ${step.action_type === "wait" ? "text-amber-400" : "text-blue-400"}`}
+                          >
+                            {step.action_type === "trigger" ? (
+                              <Search className="size-3.5" />
+                            ) : step.action_type === "wait" ? (
+                              <Clock className="size-3.5" />
+                            ) : (
+                              <LinkedinIcon className="size-3.5" />
+                            )}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-medium text-white truncate">
+                              {step.name}
+                            </p>
+                            <p className="text-[10px] text-white/30 uppercase tracking-widest mt-0.5">
+                              {step.action_type}
+                            </p>
+                          </div>
+                          {i === 0 && (
+                            <div className="size-1.5 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.3)]" />
+                          )}
+                        </div>
+                      ))}
+                      {sequenceSteps.length > 4 && (
+                        <p className="text-[10px] text-white/20 font-bold uppercase tracking-[0.2em] text-center pt-2">
+                          +{sequenceSteps.length - 4} étapes supplémentaires
+                        </p>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="flex flex-col items-center justify-center py-12 text-center">
+                      <Zap className="size-8 text-white/10 mb-4" />
+                      <p className="text-sm text-white/40">
+                        Aucun flow configuré
+                      </p>
+                      <p className="text-[10px] text-white/20 uppercase tracking-widest mt-1">
+                        Cliquez pour créer
+                      </p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </motion.section>
+
+            <motion.section {...fade} transition={{ delay: 0.14 }}>
+              <div className="flex items-center justify-between mb-8">
+                <SectionHeading>Configuration</SectionHeading>
+                <button
+                  onClick={() => toggleSettingsModal(true)}
+                  className="text-xs font-bold text-white/40 hover:text-white transition-colors"
+                >
+                  Gérer
+                </button>
+              </div>
+              <div className="space-y-5">
+                {[
+                  {
+                    label: "Cible",
+                    value:
+                      campaign.config?.target_icp?.sectors?.[0] || "Non défini",
+                  },
+                  { label: "Canal", value: "LinkedIn" },
+                  {
+                    label: "Rythme",
+                    value: `${campaign.config?.prospection?.prospects_per_day || 20}/jour`,
+                  },
+                ].map((item) => (
+                  <div
+                    key={item.label}
+                    className="flex items-center justify-between"
+                  >
+                    <span className="text-xs text-white/34 uppercase tracking-widest font-medium">
+                      {item.label}
+                    </span>
+                    <span className="text-sm text-white/80 font-medium">
+                      {item.value}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </motion.section>
           </div>
         </div>
+
+        <motion.section
+          {...fade}
+          transition={{ delay: 0.18 }}
+          className="max-w-5xl pb-20"
+        >
+          <SectionHeading>Activité</SectionHeading>
+          <div className="relative ml-2 mt-8 space-y-7 before:absolute before:left-[4px] before:top-2 before:h-[calc(100%-1rem)] before:w-px before:bg-[#1F1F1F]">
+            {activities.length === 0 ? (
+              <p className="pl-8 text-sm text-white/20 italic">
+                Aucun log récent.
+              </p>
+            ) : (
+              activities.map((act) => (
+                <div
+                  key={act.id}
+                  className="relative flex gap-7 pl-8 transition duration-200 hover:translate-x-1"
+                >
+                  <span className="absolute left-0 top-2 size-2.5 rounded-full bg-white/70 ring-4 ring-black" />
+                  <span className="w-16 text-sm text-white/40 tabular-nums">
+                    {new Date(act.created_at).toLocaleTimeString([], {
+                      hour: "2-digit",
+                      minute: "2-digit",
+                    })}
+                  </span>
+                  <div className="flex-1">
+                    <span className="text-sm text-white/78 font-medium">
+                      {act.action}
+                    </span>
+                    <p className="text-[12px] text-white/30 mt-1 leading-relaxed">
+                      {act.detail ||
+                        (act.type?.includes("message")
+                          ? "Message envoyé via LinkedIn"
+                          : "Action système")}
+                    </p>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </motion.section>
       </div>
 
       <AnimatePresence>
         {isProspectsModalOpen && (
-          <div className="fixed inset-0 z-[25] flex flex-col bg-[#050505]">
+          <div className="fixed inset-0 z-50 flex flex-col bg-[#050505]">
             <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               className="relative w-full h-full bg-[#050505] flex flex-col overflow-hidden"
-              style={{
-                paddingLeft: 'var(--sidebar-width, 0px)',
-                transition: 'padding-left 0.24s ease-out'
-              }}
             >
               <div className="px-6 py-3 border-b border-[#1F1F1F] flex items-center justify-between shrink-0 bg-[#080808]/50 backdrop-blur-xl relative z-[100]">
                 <div className="flex items-center gap-4 min-w-0">
@@ -1524,15 +2032,23 @@ export function CampaignDashboardView({
                     </div>
                     <div className="min-w-0">
                       <div className="flex items-center gap-1.5">
-                        <h2 className="text-sm font-bold text-white tracking-tight shrink-0">Contacts</h2>
+                        <h2 className="text-sm font-bold text-white tracking-tight shrink-0">
+                          Contacts
+                        </h2>
                         <span className="text-white/20 font-light">—</span>
-                        <h3 className="text-xs font-medium text-white/60 truncate max-w-[100px] lg:max-w-[150px]">{campaignName}</h3>
+                        <h3 className="text-xs font-medium text-white/60 truncate max-w-[100px] lg:max-w-[150px]">
+                          {campaignName}
+                        </h3>
                         <div className="flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-white/5 border border-white/10 shrink-0">
                           <StatusDot status={campaign.status} />
-                          <span className="text-[8px] text-white/40 uppercase font-bold tracking-wider">{STATUS_LABEL[campaign.status]}</span>
+                          <span className="text-[8px] text-white/40 uppercase font-bold tracking-wider">
+                            {STATUS_LABEL[campaign.status]}
+                          </span>
                         </div>
                       </div>
-                      <p className="text-[8px] text-white/30 uppercase tracking-widest font-bold">{displayProspects.length} prospects</p>
+                      <p className="text-[8px] text-white/30 uppercase tracking-widest font-bold">
+                        {displayProspects.length} prospects
+                      </p>
                     </div>
                   </div>
 
@@ -1544,7 +2060,9 @@ export function CampaignDashboardView({
                       onClick={() => setActiveProspectTab("campaign")}
                       className={cn(
                         "px-3 py-1 rounded-md text-[9px] font-bold uppercase tracking-wider transition-all",
-                        activeProspectTab === "campaign" ? "bg-white/[0.06] text-white" : "text-white/40 hover:text-white"
+                        activeProspectTab === "campaign"
+                          ? "bg-white/[0.06] text-white"
+                          : "text-white/40 hover:text-white",
                       )}
                     >
                       Campagne
@@ -1553,7 +2071,9 @@ export function CampaignDashboardView({
                       onClick={() => setActiveProspectTab("lists")}
                       className={cn(
                         "px-3 py-1 rounded-md text-[9px] font-bold uppercase tracking-wider transition-all",
-                        activeProspectTab === "lists" ? "bg-white/[0.06] text-white" : "text-white/40 hover:text-white"
+                        activeProspectTab === "lists"
+                          ? "bg-white/[0.06] text-white"
+                          : "text-white/40 hover:text-white",
                       )}
                     >
                       Listes
@@ -1562,7 +2082,9 @@ export function CampaignDashboardView({
                       onClick={() => setActiveProspectTab("all")}
                       className={cn(
                         "px-3 py-1 rounded-md text-[9px] font-bold uppercase tracking-wider transition-all",
-                        activeProspectTab === "all" ? "bg-white/[0.06] text-white" : "text-white/40 hover:text-white"
+                        activeProspectTab === "all"
+                          ? "bg-white/[0.06] text-white"
+                          : "text-white/40 hover:text-white",
                       )}
                     >
                       Tous
@@ -1579,8 +2101,12 @@ export function CampaignDashboardView({
                           onChange={(e) => setSelectedListId(e.target.value)}
                           className="bg-transparent text-[9px] font-bold text-white/70 uppercase tracking-wider focus:outline-none cursor-pointer"
                         >
-                          {contactLists.map(list => (
-                            <option key={list.id} value={list.id} className="bg-[#050505]">
+                          {contactLists.map((list) => (
+                            <option
+                              key={list.id}
+                              value={list.id}
+                              className="bg-[#050505]"
+                            >
                               {list.name}
                             </option>
                           ))}
@@ -1607,7 +2133,10 @@ export function CampaignDashboardView({
                       variant="outline"
                       className={cn(
                         "border-[#1F1F1F] bg-black/40 text-white/60 hover:text-white gap-1.5 h-8 rounded-lg px-2.5 text-[9px] font-bold uppercase tracking-wider shrink-0",
-                        (filterStep !== "all" || filterIcp !== "all" || filterEmail !== "all") && "text-blue-400 border-blue-500/30 bg-blue-500/5"
+                        (filterStep !== "all" ||
+                          filterIcp !== "all" ||
+                          filterEmail !== "all") &&
+                          "text-blue-400 border-blue-500/30 bg-blue-500/5",
                       )}
                     >
                       <Filter className="size-3" />
@@ -1623,7 +2152,9 @@ export function CampaignDashboardView({
                           className="absolute right-0 top-full mt-2 w-72 bg-[#0A0A0A] border border-white/10 rounded-2xl shadow-[0_20px_50px_rgba(0,0,0,0.8)] z-[999] p-6 space-y-6"
                         >
                           <div className="flex items-center justify-between">
-                            <h4 className="text-[10px] font-bold text-white/30 uppercase tracking-[0.2em]">Filtres Avancés</h4>
+                            <h4 className="text-[10px] font-bold text-white/30 uppercase tracking-[0.2em]">
+                              Filtres Avancés
+                            </h4>
                             <button
                               onClick={() => {
                                 setFilterStep("all");
@@ -1641,22 +2172,32 @@ export function CampaignDashboardView({
                           <div className="space-y-4">
                             <div className="grid grid-cols-2 gap-4">
                               <div className="space-y-2">
-                                <label className="text-[10px] text-white/20 uppercase tracking-widest font-bold">Trier par</label>
+                                <label className="text-[10px] text-white/20 uppercase tracking-widest font-bold">
+                                  Trier par
+                                </label>
                                 <select
                                   value={sortBy}
                                   onChange={(e) => setSortBy(e.target.value)}
                                   className="w-full bg-white/[0.03] border border-white/10 rounded-lg px-3 py-2 text-[11px] text-white focus:outline-none focus:border-blue-500/50"
                                 >
-                                  <option value="created_at">Date d'import</option>
+                                  <option value="created_at">
+                                    Date d'import
+                                  </option>
                                   <option value="pre_score">ICP</option>
                                   <option value="step">Step</option>
                                 </select>
                               </div>
                               <div className="space-y-2">
-                                <label className="text-[10px] text-white/20 uppercase tracking-widest font-bold">Ordre</label>
+                                <label className="text-[10px] text-white/20 uppercase tracking-widest font-bold">
+                                  Ordre
+                                </label>
                                 <select
                                   value={sortOrder}
-                                  onChange={(e) => setSortOrder(e.target.value as "asc" | "desc")}
+                                  onChange={(e) =>
+                                    setSortOrder(
+                                      e.target.value as "asc" | "desc",
+                                    )
+                                  }
                                   className="w-full bg-white/[0.03] border border-white/10 rounded-lg px-3 py-2 text-[11px] text-white focus:outline-none focus:border-blue-500/50"
                                 >
                                   <option value="desc">Décroissant</option>
@@ -1668,7 +2209,9 @@ export function CampaignDashboardView({
                             <div className="h-px bg-white/5 my-2" />
 
                             <div className="space-y-2">
-                              <label className="text-[10px] text-white/20 uppercase tracking-widest font-bold">Step</label>
+                              <label className="text-[10px] text-white/20 uppercase tracking-widest font-bold">
+                                Step
+                              </label>
                               <select
                                 value={filterStep}
                                 onChange={(e) => setFilterStep(e.target.value)}
@@ -1683,7 +2226,9 @@ export function CampaignDashboardView({
                             </div>
 
                             <div className="space-y-2">
-                              <label className="text-[10px] text-white/20 uppercase tracking-widest font-bold">ICP</label>
+                              <label className="text-[10px] text-white/20 uppercase tracking-widest font-bold">
+                                ICP
+                              </label>
                               <select
                                 value={filterIcp}
                                 onChange={(e) => setFilterIcp(e.target.value)}
@@ -1697,7 +2242,9 @@ export function CampaignDashboardView({
                             </div>
 
                             <div className="space-y-2">
-                              <label className="text-[10px] text-white/20 uppercase tracking-widest font-bold">Email</label>
+                              <label className="text-[10px] text-white/20 uppercase tracking-widest font-bold">
+                                Email
+                              </label>
                               <select
                                 value={filterEmail}
                                 onChange={(e) => setFilterEmail(e.target.value)}
@@ -1731,9 +2278,16 @@ export function CampaignDashboardView({
                       className="bg-blue-600 hover:bg-blue-500 text-white gap-1.5 h-8 rounded-lg px-3 text-[9px] font-bold uppercase tracking-wider shadow-lg shadow-blue-600/10 border-t border-blue-400/20 shrink-0"
                     >
                       <Zap className="size-3" />
-                      <span className="hidden lg:inline">Ajouter des leads</span>
+                      <span className="hidden lg:inline">
+                        Ajouter des leads
+                      </span>
                       <span className="lg:hidden">Ajouter</span>
-                      <ChevronDown className={cn("size-3 transition-transform", isAddLeadsOpen ? "rotate-180" : "")} />
+                      <ChevronDown
+                        className={cn(
+                          "size-3 transition-transform",
+                          isAddLeadsOpen ? "rotate-180" : "",
+                        )}
+                      />
                     </Button>
 
                     <AnimatePresence>
@@ -1746,7 +2300,9 @@ export function CampaignDashboardView({
                         >
                           <div className="p-2">
                             <div className="px-3 py-2 mb-1 border-b border-white/5">
-                              <span className="text-[9px] font-bold text-white/40 uppercase tracking-[0.2em]">Source de données</span>
+                              <span className="text-[9px] font-bold text-white/40 uppercase tracking-[0.2em]">
+                                Source de données
+                              </span>
                             </div>
                             <button
                               onClick={() => {
@@ -1778,7 +2334,10 @@ export function CampaignDashboardView({
                     </AnimatePresence>
                   </div>
                   <button
-                    onClick={() => { toggleProspectsModal(false); setSelectedProspect(null); }}
+                    onClick={() => {
+                      toggleProspectsModal(false);
+                      setSelectedProspect(null);
+                    }}
                     className="size-8 flex items-center justify-center rounded-full bg-white/5 border border-white/10 text-white/20 hover:text-white hover:bg-white/10 hover:border-white/20 transition-all ml-2"
                   >
                     <X className="size-4" />
@@ -1786,181 +2345,153 @@ export function CampaignDashboardView({
                 </div>
               </div>
               <div className="flex-1 overflow-hidden flex">
-                <div className={`flex-1 overflow-auto p-8 ${selectedProspect ? 'hidden lg:block lg:border-r lg:border-[#1F1F1F]' : ''}`}>
-                  <div className="border border-[#1F1F1F] rounded-2xl overflow-hidden bg-[#050505] shadow-2xl">
-                  <table className="w-full text-left text-sm">
-                    <thead className="bg-[#080808]/80 border-b border-[#1F1F1F] text-white/20 text-[10px] uppercase tracking-[0.2em] font-bold sticky top-0 z-30 backdrop-blur-md">
-                      <tr>
-                        <th className="pl-6 py-5 w-12 text-center">
-                          <input
-                            type="checkbox"
-                            checked={selectedIds.length > 0 && selectedIds.length === displayProspects.length}
-                            onChange={toggleSelectAll}
-                            className="size-4 rounded border-[#1F1F1F] bg-black/40 text-blue-500 focus:ring-blue-500/20 cursor-pointer"
-                          />
-                        </th>
-                        <th className="px-6 py-5 font-bold min-w-[200px]">Contact</th>
-                        <th className="px-6 py-5 font-bold text-center w-32 shrink-0">Step</th>
-                        <th className="px-6 py-5 font-bold text-center w-40 shrink-0">ICP</th>
-                        {!selectedProspect && (
-                          <>
-                            <th className="px-6 py-5 font-bold text-center w-32">Date d'import</th>
-                            <th className="px-6 py-5 font-bold">Email</th>
-                          </>
-                        )}
-                        <th className="px-6 py-5 font-bold text-right w-44"></th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-[#1F1F1F]/50">
-                      {isLoadingProspects ? (
-                        <tr>
-                          <td colSpan={8} className="py-20 text-center">
-                            <div className="flex flex-col items-center gap-4">
-                              <Loader2 className="size-8 animate-spin text-blue-500" />
-                              <p className="text-white/30 text-xs font-bold uppercase tracking-[0.2em]">Chargement des prospects...</p>
-                            </div>
-                          </td>
-                        </tr>
-                      ) : displayProspects.length === 0 ? (
-                        <tr>
-                          <td colSpan={8} className="py-20 text-center">
-                            <div className="flex flex-col items-center gap-4">
-                              <User className="size-8 text-white/10" />
-                              <p className="text-white/30 text-xs font-bold uppercase tracking-[0.2em]">Aucun prospect trouvé</p>
-                            </div>
-                          </td>
-                        </tr>
-                      ) : (
-                        displayProspects.map((p, i) => {
+                <div
+                  className={`flex-1 overflow-auto p-8 ${selectedProspect ? "hidden lg:block lg:border-r lg:border-[#1F1F1F]" : ""}`}
+                >
+                  <div className="divide-y divide-[#1F1F1F]">
+                    {isLoadingProspects ? (
+                      <div className="py-20 text-center">
+                        <Loader2 className="size-8 animate-spin text-blue-500 mx-auto mb-4" />
+                        <p className="text-white/30 text-[10px] font-bold uppercase tracking-[0.2em]">
+                          Chargement des prospects...
+                        </p>
+                      </div>
+                    ) : displayProspects.length === 0 ? (
+                      <div className="py-20 text-center">
+                        <User className="size-8 text-white/10 mx-auto mb-4" />
+                        <p className="text-white/30 text-[10px] font-bold uppercase tracking-[0.2em]">
+                          Aucun prospect trouvé
+                        </p>
+                      </div>
+                    ) : (
+                      displayProspects.map((p, i) => {
                         const isSelected = selectedIds.includes(p.id);
                         const icpMeta = getIcpMeta(p);
                         const isQualifying = qualifyingIds.includes(p.id);
+                        const { title, company } = getTitleAndCompany(
+                          p.role,
+                          p.company_name,
+                        );
                         return (
-                          <tr
+                          <div
                             key={`modal-${p.id}`}
                             onClick={() => setSelectedProspect(p)}
-                            className={`group cursor-pointer transition-all hover:bg-white/[0.015] ${selectedProspect?.id === p.id ? 'bg-blue-500/[0.03]' : ''} ${isSelected ? "bg-blue-500/[0.02]" : ""}`}
-                          >
-                            <td className="pl-6 py-5 w-12 text-center" onClick={(e) => e.stopPropagation()}>
-                              <input
-                                type="checkbox"
-                                checked={isSelected}
-                                onChange={() => toggleSelectOne(p.id)}
-                                className="size-4 rounded border-[#1F1F1F] bg-black/40 text-blue-500 focus:ring-blue-500/20 cursor-pointer"
-                              />
-                            </td>
-                            <td className="px-6 py-5">
-                              <div className="flex items-center gap-4">
-                                <div className="group-hover:scale-105 transition-transform duration-300 shrink-0">
-                                  <ProspectAvatar name={p.decision_maker || p.company_name} photoUrl={p.photo_url} colorIndex={i} />
-                                </div>
-                                <div className="min-w-0 flex-1">
-                                  <div className="flex items-center gap-1.5 mb-0.5">
-                                    <p className="font-bold text-[15px] text-white/90 truncate group-hover:text-white transition-colors">
-                                      {p.decision_maker ? (p.decision_maker.split(/[,|•]/)[0].split(/\s-\s/)[0].trim()) : "Inconnu"}
-                                    </p>
-                                    {p.linkedin_url && (
-                                      <a
-                                        href={p.linkedin_url}
-                                        target="_blank"
-                                        rel="noopener noreferrer"
-                                        onClick={(e) => e.stopPropagation()}
-                                        className="text-white/20 hover:text-[#0077b5] transition-all hover:scale-110 active:scale-95"
-                                      >
-                                        <LinkedinIcon className="size-3.5" />
-                                      </a>
-                                    )}
-                                  </div>
-                                  {(() => {
-                                    const { title, company } = getTitleAndCompany(p.role, p.company_name);
-                                    return (
-                                      <div className="flex flex-col mt-0.5">
-                                        <p className="text-[11px] text-white/60 font-medium leading-tight truncate">
-                                          {title}
-                                        </p>
-                                        {company && (
-                                          <p className="text-[10px] text-white/30 font-medium leading-tight mt-0.5 truncate">
-                                            @ {company}
-                                          </p>
-                                        )}
-                                      </div>
-                                    );
-                                  })()}
-                                </div>
-                              </div>
-                            </td>
-                            <td className="px-6 py-5 text-center w-32 shrink-0">
-                              <span className={cn(
-                                "px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider border inline-block w-20",
-                                p.status === 'converted'
-                                  ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
-                                  : "bg-blue-500/10 text-blue-400 border-blue-500/20"
-                              )}>
-                                {getStepLabel(p.status)}
-                              </span>
-                            </td>
-                            <td className="px-6 py-5 text-center w-40 shrink-0">
-                              <span className={cn(
-                                "px-3 py-1 rounded-md text-[10px] font-bold border inline-block min-w-[92px]",
-                                icpMeta.className
-                              )}>
-                                {icpMeta.shortLabel}
-                              </span>
-                            </td>
-                            {!selectedProspect && (
-                              <>
-                                <td className="px-6 py-5 text-center text-[11px] text-white/70 font-bold uppercase tracking-wider w-32">
-                                  {p.created_at ? new Date(p.created_at).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' }) : "—"}
-                                </td>
-                                <td className="px-6 py-5">
-                                  <div className="flex items-center gap-3">
-                                    {p.email ? (
-                                      <div className="flex items-center gap-2">
-                                        <div className="p-1.5 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-500">
-                                          <Mail className="size-3.5" />
-                                        </div>
-                                        <span className="text-[12px] text-white/50 font-medium lowercase truncate max-w-[150px]">
-                                          {p.email}
-                                        </span>
-                                      </div>
-                                    ) : (
-                                      <span className="text-[11px] text-white/20 font-bold uppercase tracking-widest">Not Found</span>
-                                    )}
-                                  </div>
-                                </td>
-                              </>
+                            className={cn(
+                              "group flex items-center justify-between gap-8 py-6 transition duration-300 hover:pl-3 hover:bg-white/[0.018] cursor-pointer border-b border-[#1F1F1F]/50 last:border-0",
+                              selectedProspect?.id === p.id &&
+                                "bg-white/[0.03] pl-3",
+                              isSelected && "bg-blue-500/[0.02]",
                             )}
-                            <td className="px-6 py-4 text-right w-44">
-                              <div className="flex items-center justify-end gap-2">
-                                <Button
-                                  onClick={(e) => { e.stopPropagation(); handleQualify([p.id]); }}
-                                  disabled={isQualifying}
-                                  className="h-8 px-3 rounded-lg bg-white/10 hover:bg-white/15 text-white border border-white/10 text-[11px] font-bold gap-2 shrink-0"
-                                >
-                                  {isQualifying ? <Loader2 className="size-3.5 animate-spin" /> : <CheckCircle2 className="size-3.5" />}
-                                  Qualifier
-                                </Button>
-                                <button
-                                  onClick={(e) => { e.stopPropagation(); setSelectedProspect(p); }}
-                                  className="size-8 flex items-center justify-center hover:bg-white/5 rounded-lg text-white/20 hover:text-white transition-all group/btn shrink-0"
-                                >
-                                  <Plus className="size-4 group-hover/btn:rotate-90 transition-transform duration-300" />
-                                </button>
+                          >
+                            <div className="flex items-center gap-5 min-w-0">
+                              <div
+                                className="shrink-0"
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                <input
+                                  type="checkbox"
+                                  checked={isSelected}
+                                  onChange={() => toggleSelectOne(p.id)}
+                                  className="size-4 rounded border-[#1F1F1F] bg-black/40 text-blue-500 focus:ring-blue-500/20 cursor-pointer"
+                                />
                               </div>
-                            </td>
-                          </tr>
-                        )
+                              <ProspectAvatar
+                                name={p.decision_maker || p.company_name}
+                                photoUrl={p.photo_url}
+                                colorIndex={i}
+                                size="size-12"
+                              />
+                              <div className="min-w-0">
+                                <p className="text-lg font-medium text-white group-hover:text-blue-400 transition-colors truncate">
+                                  {p.decision_maker
+                                    ? p.decision_maker
+                                        .split(/[,|•]/)[0]
+                                        .split(/\s-\s/)[0]
+                                        .trim()
+                                    : "Inconnu"}
+                                </p>
+                                <div className="flex flex-col mt-0.5 min-w-0">
+                                  <p className="text-sm text-white/40 truncate">
+                                    {title}
+                                  </p>
+                                  {company && (
+                                    <p className="text-[11px] text-white/20 truncate">
+                                      {company}
+                                    </p>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-12 shrink-0">
+                              <div className="hidden lg:flex flex-col items-center">
+                                <p className="text-[10px] text-white/20 uppercase tracking-widest mb-1.5 font-bold">
+                                  Importé le
+                                </p>
+                                <span className="text-[11px] text-white/60 font-medium tracking-tight">
+                                  {p.created_at
+                                    ? new Date(p.created_at).toLocaleDateString(
+                                        "fr-FR",
+                                        { day: "2-digit", month: "2-digit" },
+                                      )
+                                    : "—"}
+                                </span>
+                              </div>
+                              <div className="hidden md:flex flex-col items-center">
+                                <p className="text-[10px] text-white/20 uppercase tracking-widest mb-1.5 font-bold">
+                                  Step
+                                </p>
+                                <span
+                                  className={cn(
+                                    "px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider border",
+                                    p.status === "converted"
+                                      ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
+                                      : "bg-blue-500/10 text-blue-400 border-blue-500/20",
+                                  )}
+                                >
+                                  {getStepLabel(p.status)}
+                                </span>
+                              </div>
+                              <div className="hidden sm:flex flex-col items-center">
+                                <p className="text-[10px] text-white/20 uppercase tracking-widest mb-1.5 font-bold">
+                                  ICP
+                                </p>
+                                <span
+                                  className={cn(
+                                    "px-2.5 py-1 rounded-md text-[10px] font-bold border",
+                                    icpMeta.className,
+                                  )}
+                                >
+                                  {icpMeta.shortLabel}
+                                </span>
+                              </div>
+                              <Button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleQualify([p.id]);
+                                }}
+                                disabled={isQualifying}
+                                className="h-9 px-4 rounded-lg bg-white/5 hover:bg-white/10 text-white border border-white/10 text-[10px] font-bold uppercase tracking-wider transition-all active:scale-95"
+                              >
+                                {isQualifying ? (
+                                  <Loader2 className="size-4 animate-spin" />
+                                ) : (
+                                  "Qualifier"
+                                )}
+                              </Button>
+                            </div>
+                          </div>
+                        );
                       })
                     )}
-                    </tbody>
-                  </table>
-                </div>
+                  </div>
                 </div>
 
                 {selectedProspect && (
                   <div className="w-full lg:w-[450px] xl:w-[500px] bg-[#080808] border-l border-[#1F1F1F] flex flex-col shrink-0">
                     <div className="p-6 border-b border-[#1F1F1F] flex items-center justify-between bg-[#080808] z-10 shrink-0">
-                      <h3 className="text-xl font-bold tracking-tight">Détails Prospect</h3>
+                      <h3 className="text-xl font-bold tracking-tight">
+                        Détails Prospect
+                      </h3>
                       <button
                         onClick={() => setSelectedProspect(null)}
                         className="size-8 flex items-center justify-center rounded-full bg-white/5 border border-white/10 text-white/40 hover:bg-white/10 hover:text-white transition-all shadow-lg"
@@ -1972,15 +2503,27 @@ export function CampaignDashboardView({
                       <div className="flex flex-col items-center text-center gap-4">
                         <div className="size-24 rounded-2xl bg-white/[0.03] flex items-center justify-center overflow-hidden border border-[#1F1F1F] shrink-0 shadow-2xl">
                           {selectedProspect.photo_url ? (
-                            <img src={selectedProspect.photo_url} alt={selectedProspect.decision_maker} className="w-full h-full object-cover" />
+                            <img
+                              src={selectedProspect.photo_url}
+                              alt={selectedProspect.decision_maker}
+                              className="w-full h-full object-cover"
+                            />
                           ) : (
-                            <span className="text-3xl font-bold text-white/20">{selectedProspect.decision_maker?.charAt(0) || "U"}</span>
+                            <span className="text-3xl font-bold text-white/20">
+                              {selectedProspect.decision_maker?.charAt(0) ||
+                                "U"}
+                            </span>
                           )}
                         </div>
                         <div>
-                          <h2 className="text-2xl font-bold text-white tracking-tight">{selectedProspect.decision_maker || "Inconnu"}</h2>
+                          <h2 className="text-2xl font-bold text-white tracking-tight">
+                            {selectedProspect.decision_maker || "Inconnu"}
+                          </h2>
                           {(() => {
-                            const { title, company } = getTitleAndCompany(selectedProspect.role, selectedProspect.company_name);
+                            const { title, company } = getTitleAndCompany(
+                              selectedProspect.role,
+                              selectedProspect.company_name,
+                            );
                             return (
                               <div className="flex flex-col items-center mt-2">
                                 <p className="text-white/60 font-medium text-lg">
@@ -1988,7 +2531,7 @@ export function CampaignDashboardView({
                                 </p>
                                 {company && (
                                   <p className="text-white/30 text-base mt-1">
-                                    @ {company}
+                                    {company}
                                   </p>
                                 )}
                               </div>
@@ -1999,25 +2542,32 @@ export function CampaignDashboardView({
 
                       <div className="grid grid-cols-2 gap-4">
                         <div className="p-5 rounded-xl bg-white/[0.03] border border-[#1F1F1F] flex flex-col items-center justify-center text-center">
-                          <p className="text-[10px] text-white/20 uppercase tracking-[0.2em] font-bold mb-1.5">ICP</p>
-                          <span className={cn(
-                            "px-3 py-1.5 rounded-md text-[11px] font-bold border",
-                            getIcpMeta(selectedProspect).className
-                          )}>
+                          <p className="text-[10px] text-white/20 uppercase tracking-[0.2em] font-bold mb-1.5">
+                            ICP
+                          </p>
+                          <span
+                            className={cn(
+                              "px-3 py-1.5 rounded-md text-[11px] font-bold border",
+                              getIcpMeta(selectedProspect).className,
+                            )}
+                          >
                             {getIcpMeta(selectedProspect).label}
                           </span>
                         </div>
                         <div className="p-5 rounded-xl bg-white/[0.03] border border-[#1F1F1F] flex flex-col items-center justify-center text-center">
-                          <p className="text-[10px] text-white/20 uppercase tracking-[0.2em] font-bold mb-1.5">Qualification finale</p>
-                          <span className={cn(
-                            "px-3 py-1.5 rounded-md text-[11px] font-bold border",
-                            getQualificationMeta(selectedProspect).className
-                          )}>
+                          <p className="text-[10px] text-white/20 uppercase tracking-[0.2em] font-bold mb-1.5">
+                            Qualification finale
+                          </p>
+                          <span
+                            className={cn(
+                              "px-3 py-1.5 rounded-md text-[11px] font-bold border",
+                              getQualificationMeta(selectedProspect).className,
+                            )}
+                          >
                             {getQualificationMeta(selectedProspect).label}
                           </span>
                         </div>
                       </div>
-
 
                       <div className="space-y-4">
                         <h4 className="text-[10px] font-bold text-white/20 uppercase tracking-[0.2em] flex items-center gap-2 px-1">
@@ -2025,35 +2575,81 @@ export function CampaignDashboardView({
                         </h4>
                         <div className="p-6 rounded-xl bg-white/[0.03] border border-[#1F1F1F] space-y-5">
                           <div className="space-y-2">
-                            <p className="text-[10px] text-white/20 uppercase tracking-widest font-bold">Raison</p>
-                            <p className="text-[13px] text-white/60 leading-relaxed">
-                              {selectedProspect.qualification_reason || "Aucune qualification LLM lancée pour le moment."}
+                            <p className="text-[10px] text-white/20 uppercase tracking-widest font-bold">
+                              Raison
                             </p>
-                          </div>
-                          <div className="space-y-2">
-                            <p className="text-[10px] text-white/20 uppercase tracking-widest font-bold">Message suggéré</p>
-                            <p className="text-[13px] text-white/70 leading-relaxed whitespace-pre-wrap">
-                              {selectedProspect.suggested_message || "Le message sera généré après qualification."}
+                            <p className="text-[13px] text-white/60 leading-relaxed">
+                              {selectedProspect.qualification_reason ||
+                                "Aucune qualification LLM lancée pour le moment."}
                             </p>
                           </div>
                         </div>
                       </div>
 
-                      {/* Campaign Sequence Section */}
+                      {/* Personalized Sequence Section */}
                       <div className="space-y-4">
-                        <h4 className="text-[10px] font-bold text-white/20 uppercase tracking-[0.2em] flex items-center gap-2 px-1">
-                          <Zap className="size-3" /> Campaign Sequence
-                        </h4>
-                        <div className="p-5 rounded-xl bg-blue-500/5 border border-blue-500/10 space-y-4">
-                          <div className="flex items-center justify-between">
-                            <span className="text-xs text-white/40 uppercase tracking-wider font-medium">Status</span>
-                            <span className="px-2 py-0.5 rounded-md bg-emerald-500/10 text-emerald-400 text-[10px] font-bold uppercase border border-emerald-500/20">Actif</span>
-                          </div>
-                          <div className="flex items-center justify-between">
-                            <span className="text-xs text-white/40 uppercase tracking-wider font-medium">Étape</span>
-                            <span className="text-sm font-bold text-white">Étape 1 : Identification</span>
-                          </div>
+                        <div className="flex items-center justify-between px-1">
+                          <h4 className="text-[10px] font-bold text-white/20 uppercase tracking-[0.2em] flex items-center gap-2">
+                            <Zap className="size-3" /> Personalized Sequence
+                          </h4>
+                          {editingSequence && (
+                            <button
+                              onClick={handleSavePersonalization}
+                              className="text-[10px] font-bold text-blue-500 hover:text-blue-400 uppercase tracking-widest transition-colors flex items-center gap-1.5"
+                            >
+                              <Save className="size-3" /> Enregistrer
+                            </button>
+                          )}
                         </div>
+
+                        {editingSequence?.steps?.length > 0 ? (
+                          <div className="space-y-3">
+                            {editingSequence.steps.map(
+                              (step: any, i: number) => (
+                                <div
+                                  key={i}
+                                  className="p-4 rounded-xl bg-white/[0.03] border border-[#1F1F1F] space-y-3 group hover:border-blue-500/20 transition-all"
+                                >
+                                  <div className="flex items-center justify-between">
+                                    <p className="text-[10px] font-bold text-white/20 uppercase tracking-widest">
+                                      Step {i + 1} : {step.name}
+                                    </p>
+                                    {step.personalized_message && (
+                                      <span className="size-1.5 rounded-full bg-blue-500 shadow-[0_0_8px_rgba(59,130,246,0.3)]" />
+                                    )}
+                                  </div>
+                                  {step.personalized_message !== undefined ? (
+                                    <textarea
+                                      value={step.personalized_message}
+                                      onChange={(e) =>
+                                        handleUpdateSequenceStep(
+                                          i,
+                                          e.target.value,
+                                        )
+                                      }
+                                      className="w-full bg-black/40 border border-white/5 rounded-lg p-3 text-[13px] text-white/80 leading-relaxed focus:outline-none focus:border-blue-500/40 focus:bg-black/60 transition-all resize-none min-h-[100px] scrollbar-hide"
+                                      placeholder="Rédigez votre message personnalisé ici..."
+                                    />
+                                  ) : (
+                                    <div className="p-3 bg-white/[0.02] border border-dashed border-white/5 rounded-lg">
+                                      <p className="text-[11px] text-white/20 italic">
+                                        Action automatique sans message
+                                        personnalisé
+                                      </p>
+                                    </div>
+                                  )}
+                                </div>
+                              ),
+                            )}
+                          </div>
+                        ) : (
+                          <div className="p-6 rounded-xl bg-white/[0.03] border border-[#1F1F1F] text-center space-y-2">
+                            <p className="text-[13px] text-white/40 italic">
+                              La séquence sera personnalisée automatiquement dès
+                              que le prospect sera qualifié.
+                            </p>
+                          </div>
+                        )}
                       </div>
 
                       {/* Basic Information Section */}
@@ -2064,80 +2660,162 @@ export function CampaignDashboardView({
                         <div className="p-6 rounded-xl bg-white/[0.03] border border-[#1F1F1F] space-y-6">
                           <div className="grid grid-cols-2 gap-y-6 gap-x-4">
                             <div className="space-y-1.5">
-                              <p className="text-[10px] text-white/20 uppercase tracking-widest font-bold">Industry</p>
+                              <p className="text-[10px] text-white/20 uppercase tracking-widest font-bold">
+                                Industry
+                              </p>
                               <div className="flex items-center gap-2 text-[13px] text-white/70">
                                 <Building2 className="size-3.5 text-white/20 shrink-0" />
-                                <span className="truncate">{getProspectIndustry(selectedProspect) || "N/A"}</span>
+                                <span className="truncate">
+                                  {getProspectIndustry(selectedProspect) ||
+                                    "N/A"}
+                                </span>
                               </div>
                             </div>
                             <div className="space-y-1.5">
-                              <p className="text-[10px] text-white/20 uppercase tracking-widest font-bold">Size</p>
+                              <p className="text-[10px] text-white/20 uppercase tracking-widest font-bold">
+                                Size
+                              </p>
                               <div className="flex items-center gap-2 text-[13px] text-white/70">
                                 <Users className="size-3.5 text-white/20 shrink-0" />
-                                <span className="truncate">{getProspectCompanySize(selectedProspect) || "N/A"}</span>
+                                <span className="truncate">
+                                  {getProspectCompanySize(selectedProspect) ||
+                                    "N/A"}
+                                </span>
                               </div>
                             </div>
                             <div className="space-y-1.5">
-                              <p className="text-[10px] text-white/20 uppercase tracking-widest font-bold">Location</p>
+                              <p className="text-[10px] text-white/20 uppercase tracking-widest font-bold">
+                                Location
+                              </p>
                               <div className="flex items-center gap-2 text-[13px] text-white/70">
                                 <MapPin className="size-3.5 text-white/20 shrink-0" />
-                                <span className="truncate">{getProspectLocation(selectedProspect) || "N/A"}</span>
+                                <span className="truncate">
+                                  {getProspectLocation(selectedProspect) ||
+                                    "N/A"}
+                                </span>
                               </div>
                             </div>
                             <div className="space-y-1.5">
-                              <p className="text-[10px] text-white/20 uppercase tracking-widest font-bold">Source</p>
+                              <p className="text-[10px] text-white/20 uppercase tracking-widest font-bold">
+                                Source
+                              </p>
                               <div className="flex items-center gap-2 text-[13px] text-white/70">
                                 <Search className="size-3.5 text-white/20 shrink-0" />
-                                <span className="truncate">{selectedProspect.source || "N/A"}</span>
+                                <span className="truncate">
+                                  {selectedProspect.source || "N/A"}
+                                </span>
                               </div>
                             </div>
                             <div className="space-y-1.5">
-                              <p className="text-[10px] text-white/20 uppercase tracking-widest font-bold">Website</p>
+                              <p className="text-[10px] text-white/20 uppercase tracking-widest font-bold">
+                                Website
+                              </p>
                               <div className="flex items-center gap-2 text-[13px] text-white/70 overflow-hidden">
                                 <Globe className="size-3.5 text-white/20 shrink-0" />
                                 {getProspectWebsite(selectedProspect) ? (
-                                  <a href={getProspectWebsite(selectedProspect)!.startsWith('http') ? getProspectWebsite(selectedProspect)! : `https://${getProspectWebsite(selectedProspect)!}`} target="_blank" rel="noreferrer" className="text-blue-400 hover:text-blue-300 transition-colors truncate">{getProspectWebsite(selectedProspect)!.replace(/^https?:\/\//, '')}</a>
-                                ) : "N/A"}
+                                  <a
+                                    href={
+                                      getProspectWebsite(
+                                        selectedProspect,
+                                      )!.startsWith("http")
+                                        ? getProspectWebsite(selectedProspect)!
+                                        : `https://${getProspectWebsite(selectedProspect)!}`
+                                    }
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="text-blue-400 hover:text-blue-300 transition-colors truncate"
+                                  >
+                                    {getProspectWebsite(
+                                      selectedProspect,
+                                    )!.replace(/^https?:\/\//, "")}
+                                  </a>
+                                ) : (
+                                  "N/A"
+                                )}
                               </div>
                             </div>
                             <div className="space-y-1.5">
-                              <p className="text-[10px] text-white/20 uppercase tracking-widest font-bold">Importé le</p>
+                              <p className="text-[10px] text-white/20 uppercase tracking-widest font-bold">
+                                Importé le
+                              </p>
                               <div className="flex items-center gap-2 text-[13px] text-white/70">
                                 <Clock className="size-3.5 text-white/20 shrink-0" />
-                                <span>{selectedProspect.created_at ? new Date(selectedProspect.created_at).toLocaleDateString('fr-FR', { day: '2-digit', month: 'long', year: 'numeric' }) : "—"}</span>
+                                <span>
+                                  {selectedProspect.created_at
+                                    ? new Date(
+                                        selectedProspect.created_at,
+                                      ).toLocaleDateString("fr-FR", {
+                                        day: "2-digit",
+                                        month: "long",
+                                        year: "numeric",
+                                      })
+                                    : "—"}
+                                </span>
                               </div>
                             </div>
                           </div>
                           <div className="pt-5 border-t border-white/5 grid grid-cols-1 sm:grid-cols-2 gap-4">
                             <div className="space-y-1.5 overflow-hidden">
-                              <p className="text-[10px] text-white/20 uppercase tracking-widest font-bold">Email détecté</p>
+                              <p className="text-[10px] text-white/20 uppercase tracking-widest font-bold">
+                                Email détecté
+                              </p>
                               <div className="flex items-center gap-2 text-[13px] text-white/70 overflow-hidden">
                                 <Mail className="size-3.5 text-white/20 shrink-0" />
                                 {selectedProspect.email ? (
-                                  <a href={`mailto:${selectedProspect.email}`} className="text-blue-400 hover:text-blue-300 transition-colors truncate">{selectedProspect.email}</a>
-                                ) : "N/A"}
+                                  <a
+                                    href={`mailto:${selectedProspect.email}`}
+                                    className="text-blue-400 hover:text-blue-300 transition-colors truncate"
+                                  >
+                                    {selectedProspect.email}
+                                  </a>
+                                ) : (
+                                  "N/A"
+                                )}
                               </div>
                             </div>
                             <div className="space-y-1.5 overflow-hidden">
-                              <p className="text-[10px] text-white/20 uppercase tracking-widest font-bold">Téléphone détecté</p>
+                              <p className="text-[10px] text-white/20 uppercase tracking-widest font-bold">
+                                Téléphone détecté
+                              </p>
                               <div className="flex items-center gap-2 text-[13px] text-white/70 overflow-hidden">
                                 <Phone className="size-3.5 text-white/20 shrink-0" />
                                 {selectedProspect.phone ? (
-                                  <a href={`tel:${selectedProspect.phone}`} className="text-blue-400 hover:text-blue-300 transition-colors truncate">{selectedProspect.phone}</a>
-                                ) : "N/A"}
+                                  <a
+                                    href={`tel:${selectedProspect.phone}`}
+                                    className="text-blue-400 hover:text-blue-300 transition-colors truncate"
+                                  >
+                                    {selectedProspect.phone}
+                                  </a>
+                                ) : (
+                                  "N/A"
+                                )}
                               </div>
                             </div>
                           </div>
 
                           <div className="pt-5 border-t border-white/5 space-y-2 overflow-hidden">
-                            <p className="text-[10px] text-white/20 uppercase tracking-widest font-bold">Company LinkedIn</p>
+                            <p className="text-[10px] text-white/20 uppercase tracking-widest font-bold">
+                              Company LinkedIn
+                            </p>
                             <div className="flex items-center gap-2 text-[13px] text-white/70">
                               <Link className="size-3.5 text-white/20 shrink-0" />
                               {getProspectCompanyLinkedin(selectedProspect) ? (
-                                <a href={getProspectCompanyLinkedin(selectedProspect)!} target="_blank" rel="noreferrer" className="text-blue-400 hover:text-blue-300 transition-colors truncate flex items-center gap-1.5">
-                                  Lien entreprise <ExternalLink className="size-3" />
+                                <a
+                                  href={
+                                    getProspectCompanyLinkedin(
+                                      selectedProspect,
+                                    )!
+                                  }
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="text-blue-400 hover:text-blue-300 transition-colors truncate flex items-center gap-1.5"
+                                >
+                                  Lien entreprise{" "}
+                                  <ExternalLink className="size-3" />
                                 </a>
-                              ) : "N/A"}
+                              ) : (
+                                "N/A"
+                              )}
                             </div>
                           </div>
                         </div>
@@ -2145,10 +2823,14 @@ export function CampaignDashboardView({
 
                       {/* Company Description Section */}
                       <div className="space-y-4">
-                        <h4 className="text-[10px] font-bold text-white/20 uppercase tracking-[0.2em] px-1">Description</h4>
+                        <h4 className="text-[10px] font-bold text-white/20 uppercase tracking-[0.2em] px-1">
+                          Description
+                        </h4>
                         <div className="p-6 rounded-xl bg-white/[0.03] border border-[#1F1F1F]">
                           <p className="text-[13px] text-white/50 leading-relaxed italic">
-                            {getProspectCompanyDescription(selectedProspect) ? `"${getProspectCompanyDescription(selectedProspect)}"` : "Aucune description disponible."}
+                            {getProspectCompanyDescription(selectedProspect)
+                              ? `"${getProspectCompanyDescription(selectedProspect)}"`
+                              : "Aucune description disponible."}
                           </p>
                         </div>
                       </div>
@@ -2178,8 +2860,10 @@ export function CampaignDashboardView({
 
         {isFlowModalOpen && (
           <SequenceBuilderModal
+            campaignId={campaign.id}
             onClose={() => toggleFlowModal(false)}
             initialSteps={sequenceSteps || []}
+            prospects={initialProspects}
             onSave={async (steps) => {
               const { saveSequenceSteps } = await import("@/lib/flows/actions");
               await saveSequenceSteps(campaign.id, steps);
@@ -2194,7 +2878,12 @@ export function CampaignDashboardView({
             campaign={campaign}
           />
         )}
-        {isCsvModalOpen && <CsvImportModal onClose={() => setIsCsvModalOpen(false)} campaignId={campaign.id} />}
+        {isCsvModalOpen && (
+          <CsvImportModal
+            onClose={() => setIsCsvModalOpen(false)}
+            campaignId={campaign.id}
+          />
+        )}
       </AnimatePresence>
 
       {/* FLOATING ACTION BAR */}
@@ -2210,7 +2899,9 @@ export function CampaignDashboardView({
               <div className="size-8 rounded-lg bg-blue-500 flex items-center justify-center font-bold text-sm">
                 {selectedIds.length}
               </div>
-              <span className="text-sm font-medium text-white/60">contacts sélectionnés</span>
+              <span className="text-sm font-medium text-white/60">
+                contacts sélectionnés
+              </span>
             </div>
             <div className="flex items-center gap-3">
               <Button
@@ -2218,7 +2909,11 @@ export function CampaignDashboardView({
                 disabled={selectedIds.some((id) => qualifyingIds.includes(id))}
                 className="bg-blue-600 hover:bg-blue-500 text-white border border-blue-400/20 gap-2 h-10 px-4"
               >
-                {selectedIds.some((id) => qualifyingIds.includes(id)) ? <Loader2 className="size-4 animate-spin" /> : <CheckCircle2 className="size-4" />}
+                {selectedIds.some((id) => qualifyingIds.includes(id)) ? (
+                  <Loader2 className="size-4 animate-spin" />
+                ) : (
+                  <CheckCircle2 className="size-4" />
+                )}
                 Qualifier la sélection
               </Button>
               <Button
@@ -2227,7 +2922,11 @@ export function CampaignDashboardView({
                 variant="destructive"
                 className="bg-red-500/10 hover:bg-red-500 text-red-500 hover:text-white border border-red-500/20 gap-2 h-10 px-4"
               >
-                {isDeleting ? <Loader2 className="size-4 animate-spin" /> : <Trash2 className="size-4" />}
+                {isDeleting ? (
+                  <Loader2 className="size-4 animate-spin" />
+                ) : (
+                  <Trash2 className="size-4" />
+                )}
                 Supprimer la sélection
               </Button>
               <Button
@@ -2250,7 +2949,13 @@ export function CampaignDashboardView({
   );
 }
 
-function LinkedInExtensionModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) {
+function LinkedInExtensionModal({
+  isOpen,
+  onClose,
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+}) {
   const router = useRouter();
 
   return (
@@ -2277,49 +2982,77 @@ function LinkedInExtensionModal({ isOpen, onClose }: { isOpen: boolean; onClose:
                     <LinkedinIcon className="size-6" />
                   </div>
                   <div>
-                    <h2 className="text-xl font-bold text-white tracking-tight">Extension LinkedIn Verytis</h2>
-                    <p className="text-sm text-white/40 mt-1">Prospectez directement depuis le réseau n°1</p>
+                    <h2 className="text-xl font-bold text-white tracking-tight">
+                      Extension LinkedIn Verytis
+                    </h2>
+                    <p className="text-sm text-white/40 mt-1">
+                      Prospectez directement depuis le réseau n°1
+                    </p>
                   </div>
                 </div>
-                <button onClick={onClose} className="p-2 hover:bg-white/5 rounded-xl transition-colors text-white/20 hover:text-white">
+                <button
+                  onClick={onClose}
+                  className="p-2 hover:bg-white/5 rounded-xl transition-colors text-white/20 hover:text-white"
+                >
                   <X className="size-5" />
                 </button>
               </div>
 
               <div className="space-y-6 mb-10">
                 <div className="flex gap-4">
-                  <div className="size-6 rounded-full bg-blue-500/20 text-blue-400 text-[10px] font-bold flex items-center justify-center shrink-0 border border-blue-500/20">1</div>
+                  <div className="size-6 rounded-full bg-blue-500/20 text-blue-400 text-[10px] font-bold flex items-center justify-center shrink-0 border border-blue-500/20">
+                    1
+                  </div>
                   <div>
-                    <h4 className="text-[13px] font-bold text-white mb-1">Installez l'extension</h4>
-                    <p className="text-[12px] text-white/40 leading-relaxed">Téléchargez l'extension Verytis Pro sur le Chrome Web Store pour commencer le scraping.</p>
+                    <h4 className="text-[13px] font-bold text-white mb-1">
+                      Installez l'extension
+                    </h4>
+                    <p className="text-[12px] text-white/40 leading-relaxed">
+                      Téléchargez l'extension Verytis Pro sur le Chrome Web
+                      Store pour commencer le scraping.
+                    </p>
                   </div>
                 </div>
                 <div className="flex gap-4">
-                  <div className="size-6 rounded-full bg-blue-500/20 text-blue-400 text-[10px] font-bold flex items-center justify-center shrink-0 border border-blue-500/20">2</div>
+                  <div className="size-6 rounded-full bg-blue-500/20 text-blue-400 text-[10px] font-bold flex items-center justify-center shrink-0 border border-blue-500/20">
+                    2
+                  </div>
                   <div>
-                    <h4 className="text-[13px] font-bold text-white mb-1">Activez "Verytis Pro"</h4>
-                    <p className="text-[12px] text-white/40 leading-relaxed">Une bulle flottante apparaîtra sur LinkedIn. Connectez-vous avec votre identifiant client.</p>
+                    <h4 className="text-[13px] font-bold text-white mb-1">
+                      Activez "Verytis Pro"
+                    </h4>
+                    <p className="text-[12px] text-white/40 leading-relaxed">
+                      Une bulle flottante apparaîtra sur LinkedIn.
+                      Connectez-vous avec votre identifiant client.
+                    </p>
                   </div>
                 </div>
                 <div className="flex gap-4">
-                  <div className="size-6 rounded-full bg-blue-500/20 text-blue-400 text-[10px] font-bold flex items-center justify-center shrink-0 border border-blue-500/20">3</div>
+                  <div className="size-6 rounded-full bg-blue-500/20 text-blue-400 text-[10px] font-bold flex items-center justify-center shrink-0 border border-blue-500/20">
+                    3
+                  </div>
                   <div>
-                    <h4 className="text-[13px] font-bold text-white mb-1">Scrapez en un clic</h4>
-                    <p className="text-[12px] text-white/40 leading-relaxed">Allez sur n'importe quel profil, recherche ou post et cliquez sur "Ajouter à la campagne".</p>
+                    <h4 className="text-[13px] font-bold text-white mb-1">
+                      Scrapez en un clic
+                    </h4>
+                    <p className="text-[12px] text-white/40 leading-relaxed">
+                      Allez sur n'importe quel profil, recherche ou post et
+                      cliquez sur "Ajouter à la campagne".
+                    </p>
                   </div>
                 </div>
               </div>
 
               <div className="grid grid-cols-2 gap-4">
                 <Button
-                  onClick={() => router.push('/integrations')}
+                  onClick={() => router.push("/integrations")}
                   variant="outline"
                   className="h-12 rounded-2xl border-white/10 bg-white/5 text-white hover:bg-white/10 font-bold gap-2"
                 >
                   <Settings className="size-4" /> Voir l'Intégration
                 </Button>
                 <Button
-                  onClick={() => window.open('https://linkedin.com', '_blank')}
+                  onClick={() => window.open("https://linkedin.com", "_blank")}
                   className="h-12 rounded-2xl bg-[#0077b5] hover:bg-[#0077b5]/90 text-white font-bold gap-2"
                 >
                   <ExternalLink className="size-4" /> Ouvrir LinkedIn
@@ -2328,7 +3061,9 @@ function LinkedInExtensionModal({ isOpen, onClose }: { isOpen: boolean; onClose:
             </div>
 
             <div className="bg-[#0077b5]/5 border-t border-white/5 p-4 text-center">
-              <p className="text-[10px] text-[#0077b5] font-bold uppercase tracking-widest">L'IA s'occupe de l'enrichissement automatiquement</p>
+              <p className="text-[10px] text-[#0077b5] font-bold uppercase tracking-widest">
+                L'IA s'occupe de l'enrichissement automatiquement
+              </p>
             </div>
           </motion.div>
         </div>

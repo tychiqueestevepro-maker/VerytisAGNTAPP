@@ -201,50 +201,53 @@ export function CampaignsListView({
   };
 
   const handleCreate = async () => {
-    try {
+    if (isPending) return;
+
+    startTransition(async () => {
       setAnalyzeError(null);
-      const config = {
-        target_icp: { 
-          sectors: industries, 
-          locations: locations,
-          company_size: ["Startup", "PME", "ETI"]
-        },
-        personas: roles,
-        tone: tone,
-        sources: sources,
-        offer: offer,
-        prospection: {
-          mode: "auto",
-          prospects_per_day: prospectsPerDay,
-          search_time: "09:00",
-          sector: industries[0] || "",
-          location: locations[0] || "",
-          decision_maker: roles[0] || "",
-        },
-        injection: {
-          auto_add: autoAdd,
-          ignore_duplicates: true,
-          prioritize_linkedin: linkedinRequired,
-        },
-      };
+      try {
+        const config = {
+          target_description: offer,
+          target_icp: {
+            industries,
+            locations,
+            company_size: ["Startup", "PME", "ETI"]
+          },
+          personas: roles,
+          tone: tone,
+          sources: sources,
+          offer: offer,
+          prospection: {
+            mode: "auto",
+            prospects_per_day: prospectsPerDay,
+            search_time: "09:00",
+            sector: industries[0] || "",
+            location: locations[0] || "",
+            decision_maker: roles[0] || "",
+          },
+          injection: {
+            auto_add: autoAdd,
+            ignore_duplicates: true,
+            prioritize_linkedin: linkedinRequired,
+          },
+        };
 
-      const result = await createAction(campaignName || "Prospection IA", config);
-      
-      if (result.error) {
-        setAnalyzeError(result.error);
-        return;
-      }
+        const result = await createAction(campaignName || "Prospection IA", config);
+        
+        if (result.error) {
+          setAnalyzeError(result.error);
+          return;
+        }
 
-      if (result.data?.id) {
-        startTransition(() => {
+        if (result.data?.id) {
           router.push(`/flows/prospecting/${result.data.id}`);
-        });
-      } else {
-        setAnalyzeError("Une erreur inconnue est survenue (pas d'ID reçu).");
+        } else {
+          setAnalyzeError("Une erreur inconnue est survenue (pas d'ID reçu).");
+        }
+      } catch (e: any) {
+        setAnalyzeError(e.message || "Erreur lors de la communication avec le serveur.");
       }
-    } catch (e: any) {
-      setAnalyzeError(e.message || "Erreur lors de la communication avec le serveur.");
-    }
+    });
   };
 
   const toggleTag = (arr: string[], val: string, setter: (v: string[]) => void) => {
