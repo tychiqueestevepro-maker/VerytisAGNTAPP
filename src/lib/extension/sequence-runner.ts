@@ -26,15 +26,45 @@ function stripAccents(value: string) {
 
 function actionTypeForStep(step: any) {
   const name = stripAccents(String(step?.name || "").toLowerCase());
+  const type = String(step?.type || step?.action_type || "").toLowerCase();
 
+  if (type === "wait" || type === "condition" || type === "end") return null;
+
+  // View Profile
   if (name.includes("voir") && name.includes("profil")) return "view_profile";
+  if (name.includes("visite") && name.includes("profil")) return "view_profile";
+
+  // Connect (without message)
   if (name.includes("ajouter") && name.includes("sans")) return "connect";
+  if (name.includes("invitation") && name.includes("sans")) return "connect";
+
+  // Connect with message
   if (name.includes("ajouter") && name.includes("message")) return "connect_with_message";
+  if (name.includes("invitation") && name.includes("message")) return "connect_with_message";
+  // Default to with message for "Invitation" if not explicitly "sans"
+  if (name.includes("invitation") && !name.includes("sans")) return "connect_with_message";
+
+  // Send Message
   if (name.includes("envoyer") && name.includes("message")) return "send_message";
   if (name.includes("relance") && name.includes("message")) return "send_message";
+  if (name.includes("suivi") && name.includes("message")) return "send_message";
+  if (
+    name.includes("message") &&
+    (name.includes("suivi") || name.includes("remerciement") || name.includes("question"))
+  )
+    return "send_message";
+
+  // Default if it's a linkedin type and we didn't match above
+  if (type === "linkedin") {
+    if (name.includes("message") || name.includes("suivi") || name.includes("relance"))
+      return "send_message";
+    if (name.includes("ajouter") || name.includes("invitation")) return "connect_with_message";
+    if (name.includes("voir") || name.includes("visite")) return "view_profile";
+  }
 
   return null;
 }
+
 
 function personalizedMessagesByStep(personalizedSequence: any) {
   const map: Record<string, string> = {};
@@ -122,6 +152,34 @@ function addMinutes(date: Date, minutes: number) {
   return next;
 }
 
+function applyTimingConstraints(
+  date: Date,
+  searchTime: string = "09:00",
+  timezone: string = "Europe/Paris",
+  selectedDays: number[] = [1, 2, 3, 4, 5],
+) {
+  let target = new Date(date);
+  const [hours, minutes] = (searchTime || "09:00").split(":").map(Number);
+
+  // Set the target time
+  target.setHours(hours, minutes, 0, 0);
+
+  // If the target time for today has already passed, move to the next day
+  if (target.getTime() < date.getTime()) {
+    target.setDate(target.getDate() + 1);
+  }
+
+  // Ensure the target date is one of the selected days
+  // JS getDay(): 0 = Sunday, 1 = Monday, ..., 6 = Saturday
+  let attempts = 0;
+  while (!selectedDays.includes(target.getDay()) && attempts < 10) {
+    target.setDate(target.getDate() + 1);
+    attempts++;
+  }
+
+  return target;
+}
+
 function randomActionDelayMinutes() {
   const index = Math.floor(Math.random() * DELAY_OPTIONS_MINUTES.length);
   return DELAY_OPTIONS_MINUTES[index] || 10;
@@ -135,32 +193,51 @@ export async function enqueueExtensionActionsForQualifiedProspect(input: Enqueue
     return { created: 0, skipped: 0, reason: "no_linkedin_url" };
   }
 
+  const timing = campaign.config?.prospection || {};
+  const searchTime = timing.search_time || "09:00";
+  const timezone = timing.timezone || "Europe/Paris";
+  const selectedDays = timing.selected_days || [1, 2, 3, 4, 5];
+
   const personalizations = personalizedMessagesByStep(
     personalizedSequence ?? prospect.extra_data?.personalized_sequence,
   );
   const flatSteps = flattenSteps(sequenceSteps, prospect);
-  let scheduledAt = new Date();
+
+  // Initialize scheduledAt based on campaign constraints
+  let scheduledAt = applyTimingConstraints(new Date(), searchTime, timezone, selectedDays);
+
   let created = 0;
   let skipped = 0;
 
   for (const item of flatSteps) {
     if (item.kind === "wait") {
+      // For wait steps, we add days and then re-apply constraints to ensure it lands on a valid day/time
       scheduledAt = addDays(scheduledAt, item.days);
+      scheduledAt = applyTimingConstraints(scheduledAt, searchTime, timezone, selectedDays);
       continue;
     }
 
+
     const { step, actionType } = item;
+    const stepId = String(step.id);
     const actionDelayMinutes = randomActionDelayMinutes();
     scheduledAt = addMinutes(scheduledAt, actionDelayMinutes);
 
-    const stepId = String(step.id);
-    const dedupeKeyBase = `${clientId}:${campaign.id}:${prospect.id}:${stepId}:${actionType}`;
-    const dedupeKey = dedupeKeyBase;
+    let currentActionType = actionType;
+    const templateMessage = personalizations[stepId] || step?.config?.message || "";
+    const message = replaceVariables(templateMessage, prospect);
+
+    if (currentActionType === "connect_with_message" && !message) {
+      currentActionType = "connect";
+    }
+
+    const dedupeKeyBase = `${clientId}:${campaign.id}:${prospect.id}:${stepId}:${currentActionType}`;
 
     const { data: existingActions } = await supabase
       .from("extension_actions")
       .select("id")
       .in("dedupe_key", [dedupeKeyBase, `${dedupeKeyBase}:draft_only`, `${dedupeKeyBase}:auto_send`])
+      .not("status", "in", "(cancelled,failed)")
       .limit(1);
 
     if (existingActions?.length) {
@@ -168,12 +245,9 @@ export async function enqueueExtensionActionsForQualifiedProspect(input: Enqueue
       continue;
     }
 
-    const templateMessage = personalizations[stepId] || step?.config?.message || "";
-    const message = replaceVariables(templateMessage, prospect);
     let messageId: string | null = null;
-
-    if (MESSAGE_ACTIONS.has(actionType)) {
-      if (!message) {
+    if (MESSAGE_ACTIONS.has(currentActionType)) {
+      if (!message && currentActionType !== "connect") {
         skipped += 1;
         continue;
       }
@@ -184,7 +258,7 @@ export async function enqueueExtensionActionsForQualifiedProspect(input: Enqueue
           client_id: clientId,
           prospect_id: prospect.id,
           channel: "linkedin",
-          message_type: actionType === "send_message" ? "follow_up" : "outreach",
+          message_type: currentActionType === "send_message" ? "follow_up" : "outreach",
           body: message,
           status: "ready_to_send",
           extra_data: {
@@ -207,12 +281,12 @@ export async function enqueueExtensionActionsForQualifiedProspect(input: Enqueue
       campaign_id: campaign.id,
       prospect_id: prospect.id,
       message_id: messageId,
-      action_type: actionType,
+      action_type: currentActionType,
       linkedin_url: linkedinUrl,
       runner_type: RUNNER_TYPE,
       status: "ready",
       scheduled_at: scheduledAt.toISOString(),
-      dedupe_key: dedupeKey,
+      dedupe_key: `${clientId}:${campaign.id}:${prospect.id}:${stepId}:${currentActionType}`,
       payload: {
         execution_mode: EXECUTION_MODE,
         runner_type: RUNNER_TYPE,

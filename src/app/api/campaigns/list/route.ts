@@ -12,29 +12,11 @@ export async function GET(request: Request) {
 
     const supabase = createSupabaseServiceClient();
 
-    // On récupère les campagnes via les flows du client
+    // On récupère les campagnes via organization_id
     const { data: campaigns, error } = await supabase
       .from('campaigns')
-      .select(`
-        id, 
-        organization_id,
-        name,
-        display_name, 
-        description,
-        objective,
-        target_description,
-        target_roles,
-        target_industries,
-        target_locations,
-        target_company_size,
-        tone,
-        source,
-        config,
-        status, 
-        flow_id,
-        client_flows!inner(client_id)
-      `)
-      .eq('client_flows.client_id', clientId)
+      .select('*')
+      .eq('organization_id', clientId)
       .eq('status', 'active')
       .order('created_at', { ascending: false });
 

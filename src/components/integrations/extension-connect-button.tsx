@@ -2,7 +2,11 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { connectExtensionIntegration, disconnectExtensionIntegration } from "@/lib/actions/integrations";
+import {
+  connectExtensionIntegration,
+  disconnectExtensionIntegration,
+  getLinkedInConnectionStatus,
+} from "@/lib/actions/integrations";
 
 export function ExtensionConnectButton({ clientId, clientName, isConnected }: { clientId: string, clientName: string, isConnected: boolean }) {
   const router = useRouter();
@@ -13,6 +17,20 @@ export function ExtensionConnectButton({ clientId, clientName, isConnected }: { 
   const handleConnect = async () => {
     console.log("[integrations] handleConnect started");
     setLoading(true);
+    let completed = false;
+
+    const completeConnection = () => {
+      if (completed) return;
+      completed = true;
+      setStatus("connecte");
+      setLoading(false);
+      setTimeout(() => router.refresh(), 100);
+    };
+
+    const linkedinWindow = window.open(
+      "https://www.linkedin.com/feed/",
+      "verytis_linkedin_login"
+    );
 
     const res = await connectExtensionIntegration(clientId);
     if (!res.success || !res.extensionToken) {
@@ -21,25 +39,44 @@ export function ExtensionConnectButton({ clientId, clientName, isConnected }: { 
       return;
     }
 
-    // Attempt to connect to extension via postMessage
+    // Attempt to connect to extension via postMessage.
+    // The extension also captures the LinkedIn browser session for the cloud runner.
     const timeout = setTimeout(() => {
-      alert("L'extension n'a pas répondu. Assurez-vous qu'elle est installée et rafraîchie.");
+      if (completed) return;
+      linkedinWindow?.focus();
+      alert("Connexion LinkedIn non terminée. Connecte-toi dans l'onglet LinkedIn ouvert, puis reviens ici et relance la connexion.");
+      setStatus("en_attente");
       setLoading(false);
-    }, 10000); // 10s for identity check + confirm
+      router.refresh();
+    }, 150000);
+
+    const pollConnection = async () => {
+      for (let attempt = 0; attempt < 30 && !completed; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+        const statusResult = await getLinkedInConnectionStatus(clientId);
+        if (statusResult.connected) {
+          clearTimeout(timeout);
+          window.removeEventListener("message", onMessage);
+          completeConnection();
+          return;
+        }
+      }
+    };
 
     const onMessage = (event: MessageEvent) => {
       if (event.data.type === "VERYTIS_EXTENSION_CONNECTED") {
         clearTimeout(timeout);
         window.removeEventListener("message", onMessage);
         
-        if (event.data.success) {
+        if (event.data.success && event.data.cloudSessionConnected) {
           console.log("[integrations] extension confirmed connection for:", event.data.linkedinName);
-          setStatus("connecte");
-          setLoading(false);
-          router.refresh();
+          completeConnection();
         } else {
           console.warn("[integrations] extension connection failed or cancelled:", event.data.error);
+          alert(event.data.error || "Connexion LinkedIn cloud impossible.");
+          setStatus("en_attente");
           setLoading(false);
+          router.refresh();
         }
       }
     };
@@ -50,8 +87,11 @@ export function ExtensionConnectButton({ clientId, clientName, isConnected }: { 
       type: "VERYTIS_CONNECT_EXTENSION",
       clientId: clientId,
       clientName: clientName,
-      extensionToken: res.extensionToken
+      extensionToken: res.extensionToken,
+      returnUrl: window.location.href
     }, "*");
+
+    void pollConnection();
   };
 
   const handleDisconnect = async () => {
@@ -118,7 +158,7 @@ export function ExtensionConnectButton({ clientId, clientName, isConnected }: { 
       disabled={loading}
       className="px-4 py-2 bg-white text-black hover:bg-gray-200 rounded-md text-sm font-medium transition-colors w-full mt-4"
     >
-      {loading ? "Connexion en cours..." : "Connexion"}
+      {loading ? "Connexion en cours..." : "Connecter LinkedIn"}
     </button>
   );
 }

@@ -1,35 +1,23 @@
 "use client";
 
-import React, { useState, useRef, useEffect } from "react";
+import React, { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   X,
   Plus,
-  MessageSquare,
-  Mail,
   Clock,
   GitBranch,
   CheckCircle2,
   AlertCircle,
   Trash2,
-  Edit2,
+  RefreshCw,
   Zap,
   Save,
   ChevronDown,
-  Loader2,
   Users,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { useRouter } from "next/navigation";
-import { generateAndSaveSequence } from "@/lib/flows/actions";
-import { TopLine } from "@/components/layout/top-line";
-import { SectionHeading } from "@/components/layout/section-heading";
 import { cn } from "@/lib/utils";
-
-const fade = {
-  initial: { opacity: 0, y: 12 },
-  animate: { opacity: 1, y: 0 },
-};
 
 const LinkedinIcon = (props: any) => (
   <svg
@@ -133,8 +121,87 @@ export type StepNode = {
   };
 };
 
+type ActionDefinition = {
+  type: string;
+  name: string;
+  channel?: string;
+};
+
 function generateId() {
   return Math.random().toString(36).substring(2, 9);
+}
+
+function supportsMessageInput(name: string) {
+  return [
+    "Ajouter avec message",
+    "Envoyer message",
+    "Relance message",
+  ].includes(name);
+}
+
+function getActionSuggestions(previousStep?: StepNode) {
+  let suggestions = ACTIONS.filter((a) =>
+    ["Voir profil", "Envoyer message"].includes(a.name),
+  );
+
+  if (previousStep) {
+    if (previousStep.name === "Voir profil") {
+      suggestions = ACTIONS.filter((a) =>
+        [
+          "Ajouter avec message",
+          "Ajouter sans message",
+          "Envoyer message",
+        ].includes(a.name),
+      );
+    } else if (
+      previousStep.name.includes("Ajouter") ||
+      previousStep.name.includes("message")
+    ) {
+      suggestions = ACTIONS.filter((a) =>
+        ["Attendre X jours", "Relance message"].includes(a.name),
+      );
+    } else if (previousStep.type === "wait") {
+      suggestions = ACTIONS.filter((a) =>
+        ["Envoyer message", "Voir profil"].includes(a.name),
+      );
+    } else {
+      suggestions = ACTIONS.filter((a) =>
+        ["Envoyer message", "Attendre X jours"].includes(a.name),
+      );
+    }
+  }
+
+  return {
+    suggestions,
+    otherActions: ACTIONS.filter((a) => !suggestions.includes(a)),
+  };
+}
+
+function createStepFromAction(
+  action: ActionDefinition,
+  currentStep?: StepNode,
+  id = generateId(),
+): StepNode {
+  let config: StepNode["config"] = {};
+
+  if (action.type === "condition") {
+    config = {
+      yesBranch: currentStep?.config.yesBranch || [],
+      noBranch: currentStep?.config.noBranch || [],
+    };
+  } else if (action.type === "wait") {
+    config = { days: currentStep?.config.days || 1 };
+  } else if (supportsMessageInput(action.name)) {
+    config = { message: currentStep?.config.message || "" };
+  }
+
+  return {
+    id,
+    type: action.type,
+    name: action.name,
+    channel: action.channel,
+    config,
+  };
 }
 
 // Icon mapping
@@ -187,7 +254,6 @@ export function SequenceBuilderModal({
   onSave,
   prospects = [],
 }: SequenceBuilderProps) {
-  const router = useRouter();
   const [steps, setSteps] = useState<StepNode[]>(() => {
     if (initialSteps && initialSteps.length > 0) {
       return recursiveMapSteps(initialSteps);
@@ -222,6 +288,7 @@ export function SequenceBuilderModal({
   });
 
   const [editingStepId, setEditingStepId] = useState<string | null>(null);
+  const [isReplacePickerOpen, setIsReplacePickerOpen] = useState(false);
   const [selectedProspect, setSelectedProspect] = useState<any>(null);
 
   // Track individual prospect overrides
@@ -259,17 +326,17 @@ export function SequenceBuilderModal({
       ? prospect.decision_maker?.split(" ")[0] || "le prospect"
       : "le prospect";
 
+    const linkedinLabel = prospect ? name : "prospect LinkedIn";
+
     // Normalize and personalize technical labels
     return label
-      .replace(
-        /SI linkedin_url existe/i,
-        `Si le profil LinkedIn de ${name} est trouvé`,
-      )
+      .replace(/SI linkedin_url existe/i, `LinkedIn de ${linkedinLabel}`)
       .replace(/SI invitation acceptée/i, `Si ${name} a accepté l'invitation`)
       .replace(/SI réponse reçue/i, `Si ${name} a répondu`)
       .replace(/SI le prospect a répondu/i, `Si ${name} a répondu`)
       .replace(/le prospect/i, name);
   };
+
 
   const replaceVariables = (text: string, prospect: any, stepId?: string) => {
     // If we have a manual override for this prospect and step, use it!
@@ -357,6 +424,52 @@ export function SequenceBuilderModal({
       }));
   };
 
+  const replaceStep = (
+    nodes: StepNode[],
+    id: string,
+    replacement: StepNode,
+  ): StepNode[] => {
+    return nodes.map((node) => {
+      if (node.id === id) return replacement;
+      return {
+        ...node,
+        config: {
+          ...node.config,
+          yesBranch: node.config.yesBranch
+            ? replaceStep(node.config.yesBranch, id, replacement)
+            : undefined,
+          noBranch: node.config.noBranch
+            ? replaceStep(node.config.noBranch, id, replacement)
+            : undefined,
+        },
+      };
+    });
+  };
+
+  const findPreviousStep = (
+    nodes: StepNode[],
+    id: string,
+    parentPrevious?: StepNode,
+  ): StepNode | undefined => {
+    for (let index = 0; index < nodes.length; index++) {
+      const node = nodes[index];
+      const previous = index > 0 ? nodes[index - 1] : parentPrevious;
+
+      if (node.id === id) return previous;
+
+      const yesPrevious = findPreviousStep(
+        node.config.yesBranch || [],
+        id,
+        node,
+      );
+      if (yesPrevious) return yesPrevious;
+
+      const noPrevious = findPreviousStep(node.config.noBranch || [], id, node);
+      if (noPrevious) return noPrevious;
+    }
+    return undefined;
+  };
+
   const addStep = (
     nodes: StepNode[],
     targetId: string,
@@ -411,6 +524,51 @@ export function SequenceBuilderModal({
   };
 
   const editingStep = editingStepId ? findStep(steps, editingStepId) : null;
+  const editingPreviousStep = editingStep
+    ? findPreviousStep(steps, editingStep.id)
+    : undefined;
+
+  const handleEditStep = (id: string) => {
+    setIsReplacePickerOpen(false);
+    setEditingStepId(id);
+  };
+
+  const handleCloseEditPanel = () => {
+    setIsReplacePickerOpen(false);
+    setEditingStepId(null);
+  };
+
+  const handleReplaceStep = (action: ActionDefinition) => {
+    if (!editingStep) return;
+
+    const replacement = createStepFromAction(
+      action,
+      editingStep,
+      editingStep.id,
+    );
+
+    setSteps((currentSteps) =>
+      replaceStep(currentSteps, editingStep.id, replacement),
+    );
+
+    if (!supportsMessageInput(replacement.name)) {
+      setProspectOverrides((previousOverrides) => {
+        const cleaned: Record<string, Record<string, string>> = {};
+
+        Object.entries(previousOverrides).forEach(
+          ([prospectId, stepOverrides]) => {
+            const remaining = { ...stepOverrides };
+            delete remaining[editingStep.id];
+            cleaned[prospectId] = remaining;
+          },
+        );
+
+        return cleaned;
+      });
+    }
+
+    setIsReplacePickerOpen(false);
+  };
 
   const handleSave = async () => {
     // 1. Save global template
@@ -469,13 +627,13 @@ export function SequenceBuilderModal({
         if (node.config.yesBranch) {
           Object.assign(
             indices,
-            computeStepIndices(node.config.yesBranch, currentNum + 1, nextYes),
+            computeStepIndices(node.config.yesBranch, currentNum, nextYes),
           );
         }
         if (node.config.noBranch) {
           Object.assign(
             indices,
-            computeStepIndices(node.config.noBranch, currentNum + 1, nextNo),
+            computeStepIndices(node.config.noBranch, currentNum, nextNo),
           );
         }
       }
@@ -483,6 +641,7 @@ export function SequenceBuilderModal({
     });
     return indices;
   };
+
   const stepIndices = computeStepIndices(steps);
 
   return (
@@ -572,7 +731,8 @@ export function SequenceBuilderModal({
                         : "bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]"
                     }`}
                   />
-                  Mode : {selectedProspect ? "Aperçu Prospect" : "Édition Campagne"}
+                  Mode :{" "}
+                  {selectedProspect ? "Aperçu Prospect" : "Édition Campagne"}
                 </div>
               </div>
             </div>
@@ -618,7 +778,7 @@ export function SequenceBuilderModal({
                 selectedProspect={selectedProspect}
                 replaceVariables={replaceVariables}
                 formatConditionLabel={formatConditionLabel}
-                onEdit={setEditingStepId}
+                onEdit={handleEditStep}
                 onAdd={(parentId, step, branch) =>
                   setSteps((s) => addStep(s, parentId, step, branch))
                 }
@@ -666,12 +826,14 @@ export function SequenceBuilderModal({
                       {editingStep.name}
                     </h3>
                     <p className="text-[10px] text-white/30 uppercase tracking-[0.15em] font-black mt-0.5">
-                      {editingStep.type === "condition" ? "Condition" : "Action"}
+                      {editingStep.type === "condition"
+                        ? "Condition"
+                        : "Action"}
                     </p>
                   </div>
                 </div>
                 <button
-                  onClick={() => setEditingStepId(null)}
+                  onClick={handleCloseEditPanel}
                   className="p-1.5 text-white/40 hover:text-white bg-white/5 rounded-md"
                 >
                   <X className="size-4" />
@@ -739,9 +901,7 @@ export function SequenceBuilderModal({
                         {editingStep.channel ? `(${editingStep.channel})` : ""}
                       </p>
                     </div>
-                    {(editingStep.config.message !== undefined ||
-                      editingStep.name.includes("message") ||
-                      editingStep.name.includes("Invitation")) && (
+                    {supportsMessageInput(editingStep.name) && (
                       <div className="space-y-6">
                         {selectedProspect ? (
                           <>
@@ -917,12 +1077,29 @@ export function SequenceBuilderModal({
                 )}
               </div>
 
+              <AnimatePresence>
+                {isReplacePickerOpen && (
+                  <ActionPickerModal
+                    previousStep={editingPreviousStep}
+                    onClose={() => setIsReplacePickerOpen(false)}
+                    onSelect={handleReplaceStep}
+                  />
+                )}
+              </AnimatePresence>
+
               <div className="p-4 border-t border-white/10 bg-[#050505] flex gap-3">
+                <Button
+                  variant="ghost"
+                  onClick={() => setIsReplacePickerOpen(true)}
+                  className="text-white/70 hover:text-white hover:bg-white/10 gap-2"
+                >
+                  <RefreshCw className="size-4" /> Remplacer
+                </Button>
                 <Button
                   variant="ghost"
                   onClick={() => {
                     setSteps((s) => deleteStep(s, editingStep.id));
-                    setEditingStepId(null);
+                    handleCloseEditPanel();
                   }}
                   className="text-red-400 hover:text-red-300 hover:bg-red-500/10 gap-2"
                 >
@@ -940,7 +1117,6 @@ export function SequenceBuilderModal({
 // ----------------------------------------------------------------------
 // Sub-components
 // ----------------------------------------------------------------------
-
 
 function SequenceTree({
   nodes,
@@ -1114,7 +1290,7 @@ function NodeCard({
         </div>
       </div>
 
-      {node.config.message && (
+      {supportsMessageInput(node.name) && node.config.message && (
         <div className="mt-3 p-3 rounded-lg bg-white/[0.03] border border-white/5 group-hover:bg-white/5 transition-colors">
           <p className="text-[11px] text-white/60 line-clamp-3 leading-relaxed font-sans italic">
             {selectedProspect && replaceVariables
@@ -1127,6 +1303,108 @@ function NodeCard({
   );
 }
 
+function ActionPickerModal({
+  previousStep,
+  onSelect,
+  onClose,
+}: {
+  previousStep?: StepNode;
+  onSelect: (action: ActionDefinition) => void;
+  onClose: () => void;
+}) {
+  const { suggestions, otherActions } = getActionSuggestions(previousStep);
+
+  const renderAction = (
+    action: ActionDefinition,
+    className = "text-white/80 hover:text-white hover:bg-white/10",
+  ) => {
+    const Icon = getIconForType(action.type, action.channel);
+    const color = getColorForType(action.type, action.channel);
+
+    return (
+      <button
+        key={`${action.type}-${action.name}`}
+        onClick={() => onSelect(action)}
+        className={cn(
+          "w-full text-left px-4 py-2.5 text-sm flex items-center gap-3 group transition-colors",
+          className,
+        )}
+      >
+        <div
+          className={`p-1.5 rounded-lg border ${color} group-hover:scale-110 transition-transform`}
+        >
+          <Icon className="size-3.5" />
+        </div>
+        {action.name}
+      </button>
+    );
+  };
+
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="absolute inset-0 z-[60] bg-black/70 backdrop-blur-sm"
+      onClick={onClose}
+    >
+      <motion.div
+        initial={{ opacity: 0, y: 16, scale: 0.98 }}
+        animate={{ opacity: 1, y: 0, scale: 1 }}
+        exit={{ opacity: 0, y: 16, scale: 0.98 }}
+        transition={{ duration: 0.18 }}
+        onClick={(event) => event.stopPropagation()}
+        className="absolute left-4 right-4 bottom-20 max-h-[72vh] overflow-hidden rounded-2xl border border-white/10 bg-[#0A0A0A] shadow-2xl"
+      >
+        <div className="flex items-center justify-between border-b border-white/10 px-4 py-3 bg-white/[0.03]">
+          <div>
+            <p className="text-sm font-bold text-white">
+              Remplacer l&apos;étape
+            </p>
+            <p className="text-[10px] uppercase tracking-[0.18em] text-white/35">
+              Propositions
+            </p>
+          </div>
+          <button
+            onClick={onClose}
+            className="p-1.5 rounded-lg text-white/40 hover:text-white hover:bg-white/10 transition-colors"
+          >
+            <X className="size-4" />
+          </button>
+        </div>
+
+        <div className="max-h-[calc(72vh-64px)] overflow-y-auto py-2">
+          <div className="px-3 py-1 text-[10px] font-bold text-emerald-400 uppercase tracking-widest bg-emerald-500/5">
+            Suggestions
+          </div>
+          {suggestions.map((action) => renderAction(action))}
+
+          <div className="border-t border-white/10 my-1" />
+          {renderAction(
+            {
+              type: "condition",
+              name: CONDITIONS[0],
+              channel: CHANNELS.GENERAL,
+            },
+            "text-purple-400 hover:text-purple-300 hover:bg-purple-500/10 font-medium",
+          )}
+
+          <div className="border-t border-white/10 my-1" />
+          <div className="px-3 py-1 text-[10px] font-bold text-white/40 uppercase tracking-widest bg-white/5">
+            Autres actions
+          </div>
+          {otherActions.map((action) =>
+            renderAction(
+              action,
+              "text-white/50 hover:text-white hover:bg-white/5",
+            ),
+          )}
+        </div>
+      </motion.div>
+    </motion.div>
+  );
+}
+
 function AddNodeButton({
   onClick,
   previousStep,
@@ -1135,40 +1413,7 @@ function AddNodeButton({
   previousStep?: StepNode;
 }) {
   const [isOpen, setIsOpen] = useState(false);
-
-  // Intelligent suggestions logic
-  let suggestions = ACTIONS.filter((a) =>
-    ["Voir profil", "Envoyer message"].includes(a.name),
-  );
-
-  if (previousStep) {
-    if (previousStep.name === "Voir profil") {
-      suggestions = ACTIONS.filter((a) =>
-        [
-          "Ajouter avec message",
-          "Ajouter sans message",
-          "Envoyer message",
-        ].includes(a.name),
-      );
-    } else if (
-      previousStep.name.includes("Ajouter") ||
-      previousStep.name.includes("message")
-    ) {
-      suggestions = ACTIONS.filter((a) =>
-        ["Attendre X jours", "Relance message"].includes(a.name),
-      );
-    } else if (previousStep.type === "wait") {
-      suggestions = ACTIONS.filter((a) =>
-        ["Envoyer message", "Voir profil"].includes(a.name),
-      );
-    } else {
-      suggestions = ACTIONS.filter((a) =>
-        ["Envoyer message", "Attendre X jours"].includes(a.name),
-      );
-    }
-  }
-
-  const otherActions = ACTIONS.filter((a) => !suggestions.includes(a));
+  const { suggestions, otherActions } = getActionSuggestions(previousStep);
 
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();

@@ -119,9 +119,56 @@ export async function disconnectExtensionIntegration(clientId: string) {
     return { success: false, error: "Intégration LinkedIn introuvable." };
   }
 
+  await supabase
+    .from("linkedin_cloud_sessions")
+    .update({
+      status: "revoked",
+      updated_at: new Date().toISOString(),
+    })
+    .eq("client_id", clientId);
+
   revalidatePath("/integrations");
 
   return { success: true };
+}
+
+export async function getLinkedInConnectionStatus(clientId: string) {
+  const user = await getUserWithProfile();
+  if (!user?.profile?.client_id || user.profile.client_id !== clientId) {
+    return { success: false, connected: false, error: "Non autorisé" };
+  }
+
+  const supabase = await createSupabaseServerClient();
+  const [integrationRes, cloudSessionRes] = await Promise.all([
+    supabase
+      .from("integrations")
+      .select("status")
+      .eq("client_id", clientId)
+      .eq("integration_type", "chrome_extension")
+      .maybeSingle(),
+    supabase
+      .from("linkedin_cloud_sessions")
+      .select("status")
+      .eq("client_id", clientId)
+      .maybeSingle(),
+  ]);
+
+  if (integrationRes.error || cloudSessionRes.error) {
+    return {
+      success: false,
+      connected: false,
+      error: integrationRes.error?.message || cloudSessionRes.error?.message,
+    };
+  }
+
+  return {
+    success: true,
+    connected:
+      integrationRes.data?.status === "connected" &&
+      cloudSessionRes.data?.status === "active",
+    integrationStatus: integrationRes.data?.status || null,
+    cloudSessionStatus: cloudSessionRes.data?.status || null,
+  };
 }
 
 export async function getDefaultClientId() {

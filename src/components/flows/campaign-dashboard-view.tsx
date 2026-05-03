@@ -46,13 +46,21 @@ import {
   Send,
   Phone,
   Save,
+  ArrowRightLeft,
+  CopyPlus,
+  XCircle,
 } from "lucide-react";
 import {
   getOrganizationProspects,
   getContactLists,
   getProspectsByList,
   qualifyProspects,
+  setProspectSequenceDecision,
   updateProspectPersonalization,
+  moveProspectsToCampaign,
+  addProspectsToList,
+  getOrganizationCampaigns,
+  getProspectsMembership,
 } from "@/lib/flows/actions";
 import { Button } from "@/components/ui/button";
 import { SequenceBuilderModal } from "./sequence-builder";
@@ -336,6 +344,122 @@ const getQualificationMeta = (prospect: Prospect) => {
   }
   return QUALIFICATION_META[prospect.qualification_level];
 };
+
+type SequenceDecision = "confirmed" | "paused" | "removed";
+
+const isProspectQualificationDone = (prospect: Prospect) =>
+  prospect.qualification_status === "qualified" ||
+  prospect.qualification_status === "rejected" ||
+  Boolean(prospect.qualification_level);
+
+const getSequenceDecision = (
+  prospect: Prospect,
+): SequenceDecision | "pending" | "unqualified" => {
+  const status = prospect.extra_data?.sequence_decision?.status;
+  if (status === "confirmed" || status === "paused" || status === "removed") {
+    return status;
+  }
+  return isProspectQualificationDone(prospect) ? "pending" : "unqualified";
+};
+
+function SequenceDecisionControls({
+  prospect,
+  isLoading,
+  onDecision,
+  compact = false,
+  className,
+}: {
+  prospect: Prospect;
+  isLoading: boolean;
+  onDecision: (prospectId: string, decision: SequenceDecision) => void;
+  compact?: boolean;
+  className?: string;
+}) {
+  const decision = getSequenceDecision(prospect);
+  const isQualified = isProspectQualificationDone(prospect);
+  const isDisabled = !isQualified || isLoading;
+
+  const actions: Array<{
+    decision: SequenceDecision;
+    label: string;
+    icon: typeof CheckCircle2;
+    activeClass: string;
+    hoverClass: string;
+  }> = [
+    {
+      decision: "confirmed",
+      label: "Confirmer la séquence",
+      icon: CheckCircle2,
+      activeClass: "bg-emerald-500/15 text-emerald-300 border-emerald-500/30",
+      hoverClass: "hover:bg-emerald-500/10 hover:text-emerald-300",
+    },
+    {
+      decision: "paused",
+      label: "Mettre la suite en pause",
+      icon: Pause,
+      activeClass: "bg-amber-500/15 text-amber-300 border-amber-500/30",
+      hoverClass: "hover:bg-amber-500/10 hover:text-amber-300",
+    },
+    {
+      decision: "removed",
+      label: "Enlever de la campagne",
+      icon: XCircle,
+      activeClass: "bg-red-500/15 text-red-300 border-red-500/30",
+      hoverClass: "hover:bg-red-500/10 hover:text-red-300",
+    },
+  ];
+
+  return (
+    <div
+      className={cn(
+        "flex items-center justify-center gap-1.5",
+        !isQualified && "opacity-35",
+        className,
+      )}
+      onClick={(event) => event.stopPropagation()}
+    >
+      {actions.map((action) => {
+        const Icon = action.icon;
+        const isActive = decision === action.decision;
+
+        return (
+          <button
+            key={action.decision}
+            type="button"
+            title={
+              isQualified
+                ? action.label
+                : "Qualifiez le prospect avant de décider la suite"
+            }
+            aria-label={action.label}
+            disabled={isDisabled}
+            onClick={() => onDecision(prospect.id, action.decision)}
+            className={cn(
+              "rounded-full border border-white/10 bg-white/[0.03] text-white/35 transition-all active:scale-95 disabled:cursor-not-allowed",
+              compact ? "size-8" : "h-9 px-3",
+              isActive ? action.activeClass : action.hoverClass,
+            )}
+          >
+            {isLoading ? (
+              <Loader2 className="size-3.5 animate-spin mx-auto" />
+            ) : compact ? (
+              <Icon className="size-3.5 mx-auto" />
+            ) : (
+              <span className="flex items-center gap-2 text-[11px] font-bold">
+                <Icon className="size-3.5" />
+                {action.decision === "confirmed"
+                  ? "Confirmer"
+                  : action.decision === "paused"
+                    ? "Pause"
+                    : "Enlever"}
+              </span>
+            )}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
 
 const normalizeProspectList = (prospects: any[]): Prospect[] =>
   prospects.map((prospect) => ({
@@ -940,6 +1064,9 @@ function SettingsModal({
   const [localTimezone, setLocalTimezone] = useState(
     campaign.config?.prospection?.timezone || "Europe/Paris",
   );
+  const [localSelectedDays, setLocalSelectedDays] = useState<number[]>(
+    campaign.config?.prospection?.selected_days || [1, 2, 3, 4, 5],
+  );
 
   const handleSave = async () => {
     setIsSaving(true);
@@ -949,6 +1076,7 @@ function SettingsModal({
         prospects_per_day: localProspectsPerDay,
         search_time: localSearchTime,
         timezone: localTimezone,
+        selected_days: localSelectedDays,
       },
     });
 
@@ -1062,16 +1190,16 @@ function SettingsModal({
                             Secteurs & Taille
                           </label>
                           <div className="flex flex-wrap gap-2">
-                            {(campaign.config?.target_icp?.sectors || ["N/A"]).map(
-                              (s: string) => (
-                                <span
-                                  key={s}
-                                  className="px-2.5 py-1 rounded-md bg-emerald-500/10 border border-emerald-500/20 text-[10px] text-emerald-400 font-medium"
-                                >
-                                  {s}
-                                </span>
-                              ),
-                            )}
+                            {(
+                              campaign.config?.target_icp?.sectors || ["N/A"]
+                            ).map((s: string) => (
+                              <span
+                                key={s}
+                                className="px-2.5 py-1 rounded-md bg-emerald-500/10 border border-emerald-500/20 text-[10px] text-emerald-400 font-medium"
+                              >
+                                {s}
+                              </span>
+                            ))}
                           </div>
                         </div>
                         <div className="space-y-2">
@@ -1079,16 +1207,16 @@ function SettingsModal({
                             Zone Géographique
                           </label>
                           <div className="flex flex-wrap gap-2">
-                            {(campaign.config?.target_icp?.locations || ["N/A"]).map(
-                              (l: string) => (
-                                <span
-                                  key={l}
-                                  className="px-2.5 py-1 rounded-md bg-blue-500/10 border border-blue-500/20 text-[10px] text-blue-400 font-medium"
-                                >
-                                  {l}
-                                </span>
-                              ),
-                            )}
+                            {(
+                              campaign.config?.target_icp?.locations || ["N/A"]
+                            ).map((l: string) => (
+                              <span
+                                key={l}
+                                className="px-2.5 py-1 rounded-md bg-blue-500/10 border border-blue-500/20 text-[10px] text-blue-400 font-medium"
+                              >
+                                {l}
+                              </span>
+                            ))}
                           </div>
                         </div>
                       </div>
@@ -1155,7 +1283,9 @@ function SettingsModal({
                               min={1}
                               value={localProspectsPerDay}
                               onChange={(e) => {
-                                setLocalProspectsPerDay(parseInt(e.target.value) || 0);
+                                setLocalProspectsPerDay(
+                                  parseInt(e.target.value) || 0,
+                                );
                               }}
                               className={cn(
                                 "w-full bg-white/5 border rounded-xl px-4 py-3 text-sm text-white focus:outline-none transition-all",
@@ -1163,7 +1293,7 @@ function SettingsModal({
                                   ? "border-red-500/50 bg-red-500/5"
                                   : localProspectsPerDay > 20
                                     ? "border-amber-500/50 bg-amber-500/5 focus:border-amber-500"
-                                    : "border-white/10 focus:border-blue-500/50"
+                                    : "border-white/10 focus:border-blue-500/50",
                               )}
                             />
                             {localProspectsPerDay > 30 ? (
@@ -1182,7 +1312,8 @@ function SettingsModal({
                               </div>
                             ) : (
                               <p className="text-[10px] text-white/20 italic mt-2">
-                                Nous conseillons un maximum de 20 contacts par jour pour la sécurité.
+                                Nous conseillons un maximum de 20 contacts par
+                                jour pour la sécurité.
                               </p>
                             )}
                           </div>
@@ -1237,12 +1368,59 @@ function SettingsModal({
                           </select>
                         </div>
                       </div>
+
+                      <div className="space-y-4">
+                        <label className="text-xs text-white/30 uppercase tracking-wider font-medium">
+                          Jours d'actions
+                        </label>
+                        <div className="flex flex-wrap gap-2">
+                          {[
+                            { id: 1, label: "Lun" },
+                            { id: 2, label: "Mar" },
+                            { id: 3, label: "Mer" },
+                            { id: 4, label: "Jeu" },
+                            { id: 5, label: "Ven" },
+                            { id: 6, label: "Sam" },
+                            { id: 0, label: "Dim" },
+                          ].map((day) => {
+                            const isSelected = localSelectedDays.includes(
+                              day.id,
+                            );
+                            return (
+                              <button
+                                key={day.id}
+                                onClick={() => {
+                                  if (isSelected) {
+                                    setLocalSelectedDays(
+                                      localSelectedDays.filter(
+                                        (d) => d !== day.id,
+                                      ),
+                                    );
+                                  } else {
+                                    setLocalSelectedDays([
+                                      ...localSelectedDays,
+                                      day.id,
+                                    ]);
+                                  }
+                                }}
+                                className={cn(
+                                  "px-4 py-2 rounded-xl text-xs font-bold transition-all border",
+                                  isSelected
+                                    ? "bg-blue-500/10 border-blue-500/30 text-blue-400 shadow-[0_0_15px_rgba(59,130,246,0.1)]"
+                                    : "bg-white/5 border-white/10 text-white/40 hover:text-white/60 hover:border-white/20",
+                                )}
+                              >
+                                {day.label}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
                     </div>
                   </section>
-
-	                </motion.div>
-	              )}
-	            </AnimatePresence>
+                </motion.div>
+              )}
+            </AnimatePresence>
           </div>
         </div>
 
@@ -1471,6 +1649,7 @@ export function CampaignDashboardView({
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [isDeleting, setIsDeleting] = useState(false);
   const [qualifyingIds, setQualifyingIds] = useState<string[]>([]);
+  const [sequenceDecisionIds, setSequenceDecisionIds] = useState<string[]>([]);
   const [campaignName, setCampaignName] = useState(
     campaign.display_name || "Campagne Sans Nom",
   );
@@ -1619,17 +1798,168 @@ export function CampaignDashboardView({
     }
   };
 
+  const handleSequenceDecision = async (
+    prospectId: string,
+    decision: SequenceDecision,
+  ) => {
+    if (sequenceDecisionIds.includes(prospectId)) return;
+
+    if (
+      decision === "removed" &&
+      !confirm("Enlever ce prospect de la campagne ?")
+    ) {
+      return;
+    }
+
+    setSequenceDecisionIds((prev) =>
+      Array.from(new Set([...prev, prospectId])),
+    );
+
+    try {
+      const result = await setProspectSequenceDecision(prospectId, decision);
+
+      if (!result.success) {
+        alert(result.error || "Erreur lors de la mise à jour de la séquence");
+        return;
+      }
+
+      if (result.removed) {
+        setDisplayProspects((prev) =>
+          prev.filter((prospect) => prospect.id !== prospectId),
+        );
+        setSelectedIds((prev) => prev.filter((id) => id !== prospectId));
+        setSelectedProspect((prev) => (prev?.id === prospectId ? null : prev));
+      } else if (result.data) {
+        patchProspects([result.data as Prospect]);
+      }
+
+      router.refresh();
+    } catch (error: any) {
+      alert(error?.message || "Erreur lors de la mise à jour de la séquence");
+    } finally {
+      setSequenceDecisionIds((prev) => prev.filter((id) => id !== prospectId));
+    }
+  };
+
+  const [allCampaigns, setAllCampaigns] = useState<Campaign[]>([]);
+  const [isTransferring, setIsTransferring] = useState(false);
+  const [selectedMembership, setSelectedMembership] = useState<{
+    campaigns: Record<string, string[]>;
+    lists: Record<string, string[]>;
+  }>({ campaigns: {}, lists: {} });
+
+  useEffect(() => {
+    // On charge les campagnes et listes au montage pour la bulle d'actions
+    getOrganizationCampaigns().then((res) => {
+      if (res.data) setAllCampaigns(res.data);
+    });
+    getContactLists().then((res) => {
+      if (res.data) setContactLists(res.data);
+    });
+  }, []);
+
+  useEffect(() => {
+    if (isProspectsModalOpen) {
+      getOrganizationCampaigns().then((res) => {
+        if (res.data) setAllCampaigns(res.data);
+      });
+      getContactLists().then((res) => {
+        if (res.data) setContactLists(res.data);
+      });
+    }
+  }, [isProspectsModalOpen]);
+
+  useEffect(() => {
+    if (selectedIds.length > 0) {
+      getProspectsMembership(selectedIds).then(setSelectedMembership);
+    } else {
+      setSelectedMembership({ campaigns: {}, lists: {} });
+    }
+  }, [selectedIds]);
+
+  const handleMoveToCampaign = async (targetId: string) => {
+    if (selectedIds.length === 0) return;
+    setIsTransferring(true);
+    try {
+      const res = await moveProspectsToCampaign(selectedIds, targetId);
+      if (res.success) {
+        setSelectedIds([]);
+        router.refresh();
+      } else {
+        alert(res.error);
+      }
+    } catch (err: any) {
+      alert(err.message || "Erreur lors du transfert");
+    } finally {
+      setIsTransferring(false);
+    }
+  };
+
+  const handleAddToList = async (listId: string) => {
+    if (selectedIds.length === 0) return;
+    setIsTransferring(true);
+    try {
+      const res = await addProspectsToList(selectedIds, listId);
+      if (res.success) {
+        setSelectedIds([]);
+        router.refresh();
+      } else {
+        alert(res.error);
+      }
+    } catch (err: any) {
+      alert(err.message || "Erreur lors de l'ajout");
+    } finally {
+      setIsTransferring(false);
+    }
+  };
+
+  const handleRemoveFromCampaignByIds = async (ids: string[]) => {
+    if (ids.length === 0) return;
+    setIsTransferring(true);
+    try {
+      const { removeFromCampaign } = await import("@/lib/flows/actions");
+      const res = await removeFromCampaign(ids);
+      if (res.success) {
+        setSelectedIds([]);
+        router.refresh();
+      } else {
+        alert(res.error);
+      }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setIsTransferring(false);
+    }
+  };
+
+  const handleRemoveFromListByIds = async (ids: string[], listId: string) => {
+    if (ids.length === 0) return;
+    setIsTransferring(true);
+    try {
+      const { removeFromList } = await import("@/lib/flows/actions");
+      const res = await removeFromList(ids, listId);
+      if (res.success) {
+        setSelectedIds([]);
+        router.refresh();
+      } else {
+        alert(res.error);
+      }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setIsTransferring(false);
+    }
+  };
+
   const isPaused = campaign.status === "paused";
   const extensionStats = extensionOverview?.action_stats || {};
   const runnerIsCloud = extensionOverview?.runner_type === "cloud";
-  const lastExtensionSync = extensionOverview?.last_sync_at
-    ? new Date(extensionOverview.last_sync_at).toLocaleString("fr-FR", {
-        day: "2-digit",
-        month: "2-digit",
-        hour: "2-digit",
-        minute: "2-digit",
-      })
-    : "Jamais";
+  const selectedProspects = displayProspects.filter((prospect) =>
+    selectedIds.includes(prospect.id),
+  );
+  const hasSelectedQualifiableProspects = selectedProspects.some(
+    (prospect) => !isProspectQualificationDone(prospect),
+  );
 
   return (
     <div className="flex flex-col min-h-[calc(100vh-64px)] w-full bg-black text-white font-sans overflow-y-auto">
@@ -1641,18 +1971,6 @@ export function CampaignDashboardView({
           <div className="flex flex-wrap items-end gap-x-12 gap-y-9 md:gap-x-16">
             {[
               ["Total Prospects", initialProspects.length],
-              [
-                "Contactés",
-                initialProspects.filter((p: Prospect) =>
-                  ["contacted", "replied", "converted"].includes(p.status),
-                ).length,
-              ],
-              [
-                "Réponses",
-                initialProspects.filter((p: Prospect) =>
-                  ["replied", "converted"].includes(p.status),
-                ).length,
-              ],
               ["Statut", STATUS_LABEL[campaign.status] || campaign.status],
             ].map(([label, value], index) => (
               <div key={label}>
@@ -1688,7 +2006,9 @@ export function CampaignDashboardView({
                   ) : (
                     <Pause className="size-3.5" />
                   )}
-                  {isPaused ? "Relancer la campagne" : "Mettre en pause la campagne"}
+                  {isPaused
+                    ? "Relancer la campagne"
+                    : "Mettre en pause la campagne"}
                 </Button>
                 <button
                   onClick={() => toggleProspectsModal(true)}
@@ -1711,6 +2031,9 @@ export function CampaignDashboardView({
                 displayProspects.slice(0, 6).map((p: Prospect, i: number) => {
                   const icpMeta = getIcpMeta(p);
                   const isQualifying = qualifyingIds.includes(p.id);
+                  const isQualified = isProspectQualificationDone(p);
+                  const isSequenceDecisionLoading =
+                    sequenceDecisionIds.includes(p.id);
                   const { title, company } = getTitleAndCompany(
                     p.role,
                     p.company_name,
@@ -1732,14 +2055,27 @@ export function CampaignDashboardView({
                           size="size-12"
                         />
                         <div className="min-w-0">
-                          <p className="text-lg font-medium text-white group-hover:text-blue-400 transition-colors truncate">
-                            {p.decision_maker
-                              ? p.decision_maker
-                                  .split(/[,|•]/)[0]
-                                  .split(/\s-\s/)[0]
-                                  .trim()
-                              : "Inconnu"}
-                          </p>
+                            <div className="flex items-center gap-2">
+                              <p className="text-lg font-medium text-white group-hover:text-blue-400 transition-colors truncate">
+                                {p.decision_maker
+                                  ? p.decision_maker
+                                      .split(/[,|•]/)[0]
+                                      .split(/\s-\s/)[0]
+                                      .trim()
+                                  : "Inconnu"}
+                              </p>
+                              {(p.linkedin_url || p.profile_url) && (
+                                <a
+                                  href={p.linkedin_url || p.profile_url || "#"}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  onClick={(e) => e.stopPropagation()}
+                                  className="p-1 rounded-md bg-[#0077b5]/10 text-[#0077b5] hover:bg-[#0077b5]/20 transition-all active:scale-90"
+                                >
+                                  <LinkedinIcon className="size-3" />
+                                </a>
+                              )}
+                            </div>
                           <div className="flex flex-col mt-0.5 min-w-0">
                             <p className="text-sm text-white/40 truncate">
                               {title}
@@ -1781,13 +2117,34 @@ export function CampaignDashboardView({
                             {icpMeta.shortLabel}
                           </span>
                         </div>
+                        <div className="hidden xl:flex flex-col items-center w-32">
+                          <p className="text-[10px] text-white/20 uppercase tracking-widest mb-1.5 font-bold">
+                            Suite
+                          </p>
+                          <SequenceDecisionControls
+                            prospect={p}
+                            compact
+                            isLoading={isSequenceDecisionLoading}
+                            onDecision={handleSequenceDecision}
+                          />
+                        </div>
                         <Button
                           onClick={(e) => {
                             e.stopPropagation();
                             handleQualify([p.id]);
                           }}
-                          disabled={isQualifying}
-                          className="size-10 rounded-full bg-white/5 hover:bg-white/10 text-white border border-white/10 flex items-center justify-center p-0 transition-all active:scale-90"
+                          disabled={isQualifying || isQualified}
+                          title={
+                            isQualified
+                              ? "Qualification déjà effectuée"
+                              : "Qualifier le prospect"
+                          }
+                          className={cn(
+                            "size-10 rounded-full border flex items-center justify-center p-0 transition-all active:scale-90 disabled:cursor-not-allowed",
+                            isQualified
+                              ? "bg-white/[0.025] text-white/20 border-white/5"
+                              : "bg-white/5 hover:bg-white/10 text-white border-white/10",
+                          )}
                         >
                           {isQualifying ? (
                             <Loader2 className="size-4 animate-spin" />
@@ -1896,7 +2253,7 @@ export function CampaignDashboardView({
 
             <motion.section {...fade} transition={{ delay: 0.12 }}>
               <div className="flex items-center justify-between mb-8">
-                <SectionHeading>Runner LinkedIn</SectionHeading>
+                <SectionHeading>Intégration</SectionHeading>
                 <button
                   onClick={() => router.push("/integrations")}
                   className="text-xs font-bold text-white/40 hover:text-white transition-colors"
@@ -1919,16 +2276,11 @@ export function CampaignDashboardView({
                     </div>
                     <div className="min-w-0">
                       <p className="text-sm font-semibold text-white">
-                        {runnerIsCloud
-                          ? extensionOverview?.is_online
-                            ? "Cloud actif"
-                            : "Session à connecter"
-                          : extensionOverview?.is_online
-                            ? "Extension connectée"
-                            : "Extension hors ligne"}
-                      </p>
-                      <p className="text-[10px] text-white/30 uppercase tracking-widest mt-0.5">
-                        {runnerIsCloud ? "Dernière vérif" : "Dernier signal"} : {lastExtensionSync}
+                        {extensionOverview?.is_online
+                          ? "Connecté"
+                          : runnerIsCloud
+                            ? "À reconnecter"
+                            : "Hors ligne"}
                       </p>
                     </div>
                   </div>
@@ -1948,7 +2300,10 @@ export function CampaignDashboardView({
                     ["Réponses", extensionStats.replies || 0],
                     ["Erreurs", extensionStats.failed || 0],
                   ].map(([label, value]) => (
-                    <div key={label} className="rounded-xl bg-white/[0.025] p-3">
+                    <div
+                      key={label}
+                      className="rounded-xl bg-white/[0.025] p-3"
+                    >
                       <p className="text-lg font-semibold text-white leading-none">
                         {value}
                       </p>
@@ -1958,7 +2313,6 @@ export function CampaignDashboardView({
                     </div>
                   ))}
                 </div>
-
               </div>
             </motion.section>
 
@@ -1978,7 +2332,12 @@ export function CampaignDashboardView({
                     label: "Cible",
                     value:
                       campaign.config?.target_icp?.sectors?.length > 0
-                        ? campaign.config.target_icp.sectors.slice(0, 3).join(", ") + (campaign.config.target_icp.sectors.length > 3 ? ".." : "")
+                        ? campaign.config.target_icp.sectors
+                            .slice(0, 3)
+                            .join(", ") +
+                          (campaign.config.target_icp.sectors.length > 3
+                            ? ".."
+                            : "")
                         : "Cible sans config",
                   },
                   { label: "Canal", value: "LinkedIn" },
@@ -2395,124 +2754,213 @@ export function CampaignDashboardView({
                         </p>
                       </div>
                     ) : (
-                      displayProspects.map((p, i) => {
-                        const isSelected = selectedIds.includes(p.id);
-                        const icpMeta = getIcpMeta(p);
-                        const isQualifying = qualifyingIds.includes(p.id);
-                        const { title, company } = getTitleAndCompany(
-                          p.role,
-                          p.company_name,
-                        );
-                        return (
-                          <div
-                            key={`modal-${p.id}`}
-                            onClick={() => setSelectedProspect(p)}
-                            className={cn(
-                              "group flex items-center justify-between gap-8 py-6 transition duration-300 hover:pl-3 hover:bg-white/[0.018] cursor-pointer border-b border-[#1F1F1F]/50 last:border-0",
-                              selectedProspect?.id === p.id &&
-                                "bg-white/[0.03] pl-3",
-                              isSelected && "bg-blue-500/[0.02]",
-                            )}
-                          >
-                            <div className="flex items-center gap-5 min-w-0">
-                              <div
-                                className="shrink-0"
-                                onClick={(e) => e.stopPropagation()}
-                              >
-                                <input
-                                  type="checkbox"
-                                  checked={isSelected}
-                                  onChange={() => toggleSelectOne(p.id)}
-                                  className="size-4 rounded border-[#1F1F1F] bg-black/40 text-blue-500 focus:ring-blue-500/20 cursor-pointer"
-                                />
-                              </div>
-                              <ProspectAvatar
-                                name={p.decision_maker || p.company_name}
-                                photoUrl={p.photo_url}
-                                colorIndex={i}
-                                size="size-12"
-                              />
-                              <div className="min-w-0">
-                                <p className="text-lg font-medium text-white group-hover:text-blue-400 transition-colors truncate">
-                                  {p.decision_maker
-                                    ? p.decision_maker
-                                        .split(/[,|•]/)[0]
-                                        .split(/\s-\s/)[0]
-                                        .trim()
-                                    : "Inconnu"}
-                                </p>
-                                <div className="flex flex-col mt-0.5 min-w-0">
-                                  <p className="text-sm text-white/40 truncate">
-                                    {title}
-                                  </p>
-                                  {company && (
-                                    <p className="text-[11px] text-white/20 truncate">
-                                      {company}
-                                    </p>
-                                  )}
-                                </div>
-                              </div>
+                      <>
+                        <div className="flex items-center gap-6 px-6 py-4 bg-white/[0.02] border-b border-[#1F1F1F]">
+                          <div className="flex items-center gap-4 min-w-[280px] flex-1">
+                            <input
+                              type="checkbox"
+                              checked={
+                                selectedIds.length ===
+                                  displayProspects.length &&
+                                displayProspects.length > 0
+                              }
+                              onChange={toggleSelectAll}
+                              className="size-4 rounded border-[#1F1F1F] bg-black/40 text-blue-500 focus:ring-blue-500/20 cursor-pointer"
+                            />
+                            <span className="text-[10px] font-bold text-white/20 uppercase tracking-[0.2em]">
+                              Prospects
+                            </span>
+                          </div>
+
+                          <div className="flex items-center gap-8 shrink-0">
+                            <div className="hidden lg:flex flex-col items-center w-20">
+                              <span className="text-[10px] font-bold text-white/20 uppercase tracking-[0.2em]">
+                                Importé
+                              </span>
                             </div>
-                            <div className="flex items-center gap-8 shrink-0">
-                              <div className="hidden lg:flex flex-col items-center w-20">
-                                <p className="text-[10px] text-white/20 uppercase tracking-widest mb-1.5 font-bold">
-                                  Importé le
-                                </p>
-                                <span className="text-[11px] text-white/60 font-medium tracking-tight">
-                                  {p.created_at
-                                    ? new Date(p.created_at).toLocaleDateString(
-                                        "fr-FR",
-                                        { day: "2-digit", month: "2-digit" },
-                                      )
-                                    : "—"}
-                                </span>
-                              </div>
-                              <div className="hidden md:flex flex-col items-center w-16">
-                                <p className="text-[10px] text-white/20 uppercase tracking-widest mb-1.5 font-bold">
-                                  Step
-                                </p>
-                                <span
-                                  className={cn(
-                                    "px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider border",
-                                    p.status === "converted"
-                                      ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
-                                      : "bg-blue-500/10 text-blue-400 border-blue-500/20",
-                                  )}
-                                >
-                                  {getStepLabel(p.status)}
-                                </span>
-                              </div>
-                              <div className="hidden sm:flex flex-col items-center w-16">
-                                <p className="text-[10px] text-white/20 uppercase tracking-widest mb-1.5 font-bold">
-                                  ICP
-                                </p>
-                                <span
-                                  className={cn(
-                                    "px-2.5 py-1 rounded-md text-[10px] font-bold border",
-                                    icpMeta.className,
-                                  )}
-                                >
-                                  {icpMeta.shortLabel}
-                                </span>
-                              </div>
-                              <Button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleQualify([p.id]);
-                                }}
-                                disabled={isQualifying}
-                                className="h-9 px-4 rounded-lg bg-white/5 hover:bg-white/10 text-white border border-white/10 text-[10px] font-bold uppercase tracking-wider transition-all active:scale-95"
-                              >
-                                {isQualifying ? (
-                                  <Loader2 className="size-4 animate-spin" />
-                                ) : (
-                                  "Qualifier"
-                                )}
-                              </Button>
+                            <div className="hidden md:flex flex-col items-center w-16">
+                              <span className="text-[10px] font-bold text-white/20 uppercase tracking-[0.2em]">
+                                Step
+                              </span>
+                            </div>
+                            <div className="hidden sm:flex flex-col items-center w-16">
+                              <span className="text-[10px] font-bold text-white/20 uppercase tracking-[0.2em]">
+                                ICP
+                              </span>
+                            </div>
+                            <div className="hidden xl:flex flex-col items-center w-32">
+                              <span className="text-[10px] font-bold text-white/20 uppercase tracking-[0.2em]">
+                                Suite
+                              </span>
+                            </div>
+                            <div className="w-9 flex justify-center">
+                              <span className="text-[10px] font-bold text-white/20 uppercase tracking-[0.2em]">
+                                Actions
+                              </span>
                             </div>
                           </div>
-                        );
-                      })
+                        </div>
+                        {displayProspects.map((p, i) => {
+                          const isSelected = selectedIds.includes(p.id);
+                          const icpMeta = getIcpMeta(p);
+                          const isQualifying = qualifyingIds.includes(p.id);
+                          const isQualified = isProspectQualificationDone(p);
+                          const isSequenceDecisionLoading =
+                            sequenceDecisionIds.includes(p.id);
+                          const { title, company } = getTitleAndCompany(
+                            p.role,
+                            p.company_name,
+                          );
+                          return (
+                            <div
+                              key={`modal-${p.id}`}
+                              onClick={() => setSelectedProspect(p)}
+                              className={cn(
+                                "group flex items-center justify-between gap-8 px-6 py-6 transition duration-300 hover:bg-white/[0.018] cursor-pointer border-b border-[#1F1F1F]/50 last:border-0",
+                                selectedProspect?.id === p.id &&
+                                  "bg-white/[0.03]",
+                                isSelected && "bg-blue-500/[0.02]",
+                              )}
+                            >
+                              <div className="flex items-center gap-5 min-w-[280px] flex-1">
+                                <div
+                                  className="shrink-0"
+                                  onClick={(e) => e.stopPropagation()}
+                                >
+                                  <input
+                                    type="checkbox"
+                                    checked={isSelected}
+                                    onChange={() => toggleSelectOne(p.id)}
+                                    className="size-4 rounded border-[#1F1F1F] bg-black/40 text-blue-500 focus:ring-blue-500/20 cursor-pointer"
+                                  />
+                                </div>
+                                <ProspectAvatar
+                                  name={p.decision_maker || p.company_name}
+                                  photoUrl={p.photo_url}
+                                  colorIndex={i}
+                                  size="size-12"
+                                />
+                                <div className="min-w-0">
+                                  <div className="flex items-center gap-2">
+                                    <p className="text-lg font-medium text-white group-hover:text-blue-400 transition-colors truncate">
+                                      {p.decision_maker
+                                        ? p.decision_maker
+                                            .split(/[,|•]/)[0]
+                                            .split(/\s-\s/)[0]
+                                            .trim()
+                                        : "Inconnu"}
+                                    </p>
+                                    {(p.linkedin_url || p.profile_url) && (
+                                      <a
+                                        href={p.linkedin_url || p.profile_url || "#"}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        onClick={(e) => e.stopPropagation()}
+                                        className="p-1.5 rounded-lg bg-[#0077b5]/10 text-[#0077b5] hover:bg-[#0077b5]/20 transition-all active:scale-90 flex-shrink-0"
+                                      >
+                                        <LinkedinIcon className="size-3.5" />
+                                      </a>
+                                    )}
+                                  </div>
+                                  <div className="flex flex-col mt-0.5 min-w-0">
+                                    <p className="text-sm text-white/40 truncate">
+                                      {title}
+                                    </p>
+                                    {company && (
+                                      <p className="text-[11px] text-white/20 truncate">
+                                        {company}
+                                      </p>
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-8 shrink-0">
+                                <div className="hidden lg:flex flex-col items-center w-20">
+                                  <p className="text-[10px] text-white/20 uppercase tracking-widest mb-1.5 font-bold">
+                                    Importé le
+                                  </p>
+                                  <span className="text-[11px] text-white/60 font-medium tracking-tight">
+                                    {p.created_at
+                                      ? new Date(
+                                          p.created_at,
+                                        ).toLocaleDateString("fr-FR", {
+                                          day: "2-digit",
+                                          month: "2-digit",
+                                        })
+                                      : "—"}
+                                  </span>
+                                </div>
+                                <div className="hidden md:flex flex-col items-center w-16">
+                                  <p className="text-[10px] text-white/20 uppercase tracking-widest mb-1.5 font-bold">
+                                    Step
+                                  </p>
+                                  <span
+                                    className={cn(
+                                      "px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider border",
+                                      p.status === "converted"
+                                        ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
+                                        : "bg-blue-500/10 text-blue-400 border-blue-500/20",
+                                    )}
+                                  >
+                                    {getStepLabel(p.status)}
+                                  </span>
+                                </div>
+                                <div className="hidden sm:flex flex-col items-center w-16">
+                                  <p className="text-[10px] text-white/20 uppercase tracking-widest mb-1.5 font-bold">
+                                    ICP
+                                  </p>
+                                  <span
+                                    className={cn(
+                                      "px-2.5 py-1 rounded-md text-[10px] font-bold border",
+                                      icpMeta.className,
+                                    )}
+                                  >
+                                    {icpMeta.shortLabel}
+                                  </span>
+                                </div>
+                                <div className="hidden xl:flex flex-col items-center w-32">
+                                  <p className="text-[10px] text-white/20 uppercase tracking-widest mb-1.5 font-bold">
+                                    Suite
+                                  </p>
+                                  <SequenceDecisionControls
+                                    prospect={p}
+                                    compact
+                                    isLoading={isSequenceDecisionLoading}
+                                    onDecision={handleSequenceDecision}
+                                  />
+                                </div>
+                                <Button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleQualify([p.id]);
+                                  }}
+                                  disabled={
+                                    qualifyingIds.includes(p.id) || isQualified
+                                  }
+                                  variant="ghost"
+                                  title={
+                                    isQualified
+                                      ? "Qualification déjà effectuée"
+                                      : "Qualifier le prospect"
+                                  }
+                                  className={cn(
+                                    "size-9 rounded-full p-0 border transition-all active:scale-90 disabled:cursor-not-allowed",
+                                    isQualified
+                                      ? "bg-white/[0.025] text-white/20 border-white/5"
+                                      : "bg-white/5 hover:bg-white/10 text-white/40 hover:text-white border-white/5",
+                                  )}
+                                >
+                                  {qualifyingIds.includes(p.id) ? (
+                                    <Loader2 className="size-4 animate-spin" />
+                                  ) : (
+                                    <CheckCircle2 className="size-4" />
+                                  )}
+                                </Button>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </>
                     )}
                   </div>
                 </div>
@@ -2614,6 +3062,46 @@ export function CampaignDashboardView({
                                 "Aucune qualification LLM lancée pour le moment."}
                             </p>
                           </div>
+                        </div>
+                      </div>
+
+                      <div className="space-y-4">
+                        <h4 className="text-[10px] font-bold text-white/20 uppercase tracking-[0.2em] flex items-center gap-2 px-1">
+                          <Send className="size-3" /> Suite de séquence
+                        </h4>
+                        <div className="p-5 rounded-xl bg-white/[0.03] border border-[#1F1F1F] space-y-4">
+                          <div className="flex items-center justify-between gap-4">
+                            <div>
+                              <p className="text-[13px] font-medium text-white/70">
+                                {getSequenceDecision(selectedProspect) ===
+                                "confirmed"
+                                  ? "Séquence confirmée"
+                                  : getSequenceDecision(selectedProspect) ===
+                                      "paused"
+                                    ? "Séquence en pause"
+                                    : getSequenceDecision(selectedProspect) ===
+                                        "removed"
+                                      ? "Retiré de la campagne"
+                                      : isProspectQualificationDone(
+                                            selectedProspect,
+                                          )
+                                        ? "En attente de décision"
+                                        : "Qualification requise"}
+                              </p>
+                              <p className="text-[11px] text-white/30 mt-1">
+                                Confirmer lance la file, pause garde le contact,
+                                enlever le sort de cette campagne.
+                              </p>
+                            </div>
+                          </div>
+                          <SequenceDecisionControls
+                            prospect={selectedProspect}
+                            isLoading={sequenceDecisionIds.includes(
+                              selectedProspect.id,
+                            )}
+                            onDecision={handleSequenceDecision}
+                            className="justify-start"
+                          />
                         </div>
                       </div>
 
@@ -2871,15 +3359,25 @@ export function CampaignDashboardView({
                     <div className="p-6 border-t border-[#1F1F1F] bg-[#080808]/80 backdrop-blur-xl shrink-0">
                       <Button
                         onClick={() => handleQualify([selectedProspect.id])}
-                        disabled={qualifyingIds.includes(selectedProspect.id)}
-                        className="w-full h-12 rounded-xl bg-blue-600 hover:bg-blue-500 text-white gap-3 font-bold text-base shadow-[0_0_20px_rgba(37,99,235,0.2)] transition-all active:scale-95"
+                        disabled={
+                          qualifyingIds.includes(selectedProspect.id) ||
+                          isProspectQualificationDone(selectedProspect)
+                        }
+                        className={cn(
+                          "w-full h-12 rounded-xl gap-3 font-bold text-base transition-all active:scale-95 disabled:cursor-not-allowed",
+                          isProspectQualificationDone(selectedProspect)
+                            ? "bg-white/[0.04] text-white/30 border border-white/5"
+                            : "bg-blue-600 hover:bg-blue-500 text-white shadow-[0_0_20px_rgba(37,99,235,0.2)]",
+                        )}
                       >
                         {qualifyingIds.includes(selectedProspect.id) ? (
                           <Loader2 className="size-5 animate-spin" />
                         ) : (
                           <CheckCircle2 className="size-5" />
                         )}
-                        Qualifier le prospect
+                        {isProspectQualificationDone(selectedProspect)
+                          ? "Prospect qualifié"
+                          : "Qualifier le prospect"}
                       </Button>
                     </div>
                   </div>
@@ -2921,49 +3419,277 @@ export function CampaignDashboardView({
       <AnimatePresence>
         {selectedIds.length > 0 && (
           <motion.div
-            initial={{ y: 20, opacity: 0 }}
-            animate={{ y: 0, opacity: 1 }}
-            exit={{ y: 20, opacity: 0 }}
-            className="fixed bottom-8 left-1/2 -translate-x-1/2 z-[200] bg-[#0A0A0A] border border-white/10 rounded-2xl p-4 shadow-[0_30px_100px_rgba(0,0,0,0.8)] flex items-center gap-6 min-w-[400px]"
+            initial={{ y: 100, opacity: 0, x: "-50%" }}
+            animate={{ y: 0, opacity: 1, x: "-50%" }}
+            exit={{ y: 100, opacity: 0, x: "-50%" }}
+            className="fixed bottom-8 left-1/2 z-[200] flex items-center gap-2 p-2 bg-[#0A0A0A]/80 backdrop-blur-xl border border-white/10 rounded-2xl shadow-2xl"
           >
-            <div className="flex items-center gap-3 pr-6 border-r border-white/10">
-              <div className="size-8 rounded-lg bg-blue-500 flex items-center justify-center font-bold text-sm">
+            <div className="flex items-center gap-3 pr-6 border-r border-white/5">
+              <div className="size-8 rounded-lg bg-blue-500/10 flex items-center justify-center text-blue-400 font-bold text-xs">
                 {selectedIds.length}
               </div>
-              <span className="text-sm font-medium text-white/60">
-                contacts sélectionnés
-              </span>
+              <p className="text-[10px] font-bold text-white/40 uppercase tracking-widest">
+                Sélectionnés
+              </p>
             </div>
-            <div className="flex items-center gap-3">
+
+            <div className="flex items-center gap-2 pl-3">
               <Button
-                onClick={() => handleQualify(selectedIds)}
-                disabled={selectedIds.some((id) => qualifyingIds.includes(id))}
-                className="bg-blue-600 hover:bg-blue-500 text-white border border-blue-400/20 gap-2 h-10 px-4"
+                onClick={() =>
+                  handleQualify(
+                    selectedProspects
+                      .filter(
+                        (prospect) => !isProspectQualificationDone(prospect),
+                      )
+                      .map((prospect) => prospect.id),
+                  )
+                }
+                disabled={
+                  selectedIds.some((id) => qualifyingIds.includes(id)) ||
+                  !hasSelectedQualifiableProspects
+                }
+                variant="ghost"
+                className={cn(
+                  "h-9 gap-2 text-[10px] font-bold uppercase tracking-widest disabled:cursor-not-allowed",
+                  hasSelectedQualifiableProspects
+                    ? "text-blue-400 hover:text-blue-300 hover:bg-blue-500/5"
+                    : "text-white/20",
+                )}
               >
                 {selectedIds.some((id) => qualifyingIds.includes(id)) ? (
-                  <Loader2 className="size-4 animate-spin" />
+                  <Loader2 className="size-3.5 animate-spin" />
                 ) : (
-                  <CheckCircle2 className="size-4" />
+                  <CheckCircle2 className="size-3.5" />
                 )}
-                Qualifier la sélection
+                Qualifier
               </Button>
+
+              <div className="relative group/menu">
+                <Button
+                  variant="ghost"
+                  className="h-9 gap-2 text-[10px] font-bold uppercase tracking-widest text-white/60 hover:text-white hover:bg-white/5"
+                >
+                  <ArrowRightLeft className="size-3.5" />
+                  Transférer
+                </Button>
+                <div className="absolute bottom-full left-0 mb-2 w-64 bg-[#0A0A0A] border border-white/10 rounded-xl shadow-2xl opacity-0 invisible group-hover/menu:opacity-100 group-hover/menu:visible transition-all p-2 max-h-80 overflow-y-auto">
+                  <p className="px-3 py-2 text-[9px] font-bold text-white/20 uppercase tracking-[0.2em] border-b border-white/5 mb-1">
+                    Vers une campagne
+                  </p>
+                  {allCampaigns.length > 0 ? (
+                    allCampaigns.map((c) => {
+                      const members = selectedMembership.campaigns[c.id] || [];
+                      const countIn = selectedIds.filter((id) =>
+                        members.includes(id),
+                      ).length;
+                      const isAllIn = countIn === selectedIds.length;
+                      const isCurrent = c.id === campaign.id;
+
+                      return (
+                        <button
+                          key={c.id}
+                          disabled={isAllIn || isTransferring}
+                          onClick={() => handleMoveToCampaign(c.id)}
+                          className={cn(
+                            "w-full px-3 py-2 rounded-lg text-left text-[11px] font-medium transition-colors flex items-center justify-between",
+                            isAllIn
+                              ? "text-white/20 cursor-not-allowed bg-white/[0.02]"
+                              : "text-white/60 hover:text-white hover:bg-white/5",
+                          )}
+                        >
+                          <span className="truncate mr-2">
+                            {c.display_name}
+                          </span>
+                          {isCurrent ? (
+                            <span className="text-[8px] opacity-40 shrink-0">
+                              (Actuelle)
+                            </span>
+                          ) : isAllIn ? (
+                            <span className="text-[8px] opacity-40 shrink-0">
+                              (Tous présents)
+                            </span>
+                          ) : countIn > 0 ? (
+                            <span className="text-[8px] text-blue-400 shrink-0">
+                              ({countIn} déjà)
+                            </span>
+                          ) : null}
+                        </button>
+                      );
+                    })
+                  ) : (
+                    <div className="px-3 py-4 text-center">
+                      <p className="text-[10px] text-white/20 italic">
+                        Aucune campagne active
+                      </p>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="relative group/menu">
+                <Button
+                  variant="ghost"
+                  className="h-9 gap-2 text-[10px] font-bold uppercase tracking-widest text-white/60 hover:text-white hover:bg-white/5"
+                >
+                  <CopyPlus className="size-3.5" />
+                  Ajouter à
+                </Button>
+                <div className="absolute bottom-full left-0 mb-2 w-64 bg-[#0A0A0A] border border-white/10 rounded-xl shadow-2xl opacity-0 invisible group-hover/menu:opacity-100 group-hover/menu:visible transition-all p-2 max-h-80 overflow-y-auto">
+                  <p className="px-3 py-2 text-[9px] font-bold text-white/20 uppercase tracking-[0.2em] border-b border-white/5 mb-1">
+                    Vers une liste
+                  </p>
+                  {contactLists.length > 0 ? (
+                    contactLists.map((l) => {
+                      const members = selectedMembership.lists[l.id] || [];
+                      const countIn = selectedIds.filter((id) =>
+                        members.includes(id),
+                      ).length;
+                      const isAllIn = countIn === selectedIds.length;
+
+                      return (
+                        <button
+                          key={l.id}
+                          disabled={isAllIn || isTransferring}
+                          onClick={() => handleAddToList(l.id)}
+                          className={cn(
+                            "w-full px-3 py-2 rounded-lg text-left text-[11px] font-medium transition-colors flex items-center justify-between",
+                            isAllIn
+                              ? "text-white/20 cursor-not-allowed bg-white/[0.02]"
+                              : "text-white/60 hover:text-white hover:bg-white/5",
+                          )}
+                        >
+                          <span className="truncate mr-2">{l.name}</span>
+                          {isAllIn ? (
+                            <span className="text-[8px] opacity-40 shrink-0">
+                              (Tous présents)
+                            </span>
+                          ) : countIn > 0 ? (
+                            <span className="text-[8px] text-blue-400 shrink-0">
+                              ({countIn} déjà)
+                            </span>
+                          ) : null}
+                        </button>
+                      );
+                    })
+                  ) : (
+                    <div className="px-3 py-4 text-center">
+                      <p className="text-[10px] text-white/20 italic">
+                        Aucune liste trouvée
+                      </p>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="relative group/menu">
+                <Button
+                  variant="ghost"
+                  className="h-9 gap-2 text-[10px] font-bold uppercase tracking-widest text-red-400/60 hover:text-red-400 hover:bg-red-500/5"
+                >
+                  <XCircle className="size-3.5" />
+                  Retirer
+                </Button>
+                <div className="absolute bottom-full left-0 mb-2 w-64 bg-[#0A0A0A] border border-white/10 rounded-xl shadow-2xl opacity-0 invisible group-hover/menu:opacity-100 group-hover/menu:visible transition-all p-2 max-h-80 overflow-y-auto">
+                  <p className="px-3 py-2 text-[9px] font-bold text-white/20 uppercase tracking-[0.2em] border-b border-white/5 mb-1">
+                    Retirer de...
+                  </p>
+
+                  <p className="px-3 py-2 text-[9px] font-bold text-white/20 uppercase tracking-[0.2em] mb-1">
+                    Des campagnes
+                  </p>
+
+                  {allCampaigns.map((c) => {
+                    const members = selectedMembership.campaigns[c.id] || [];
+                    const countIn = selectedIds.filter((id) =>
+                      members.includes(id),
+                    ).length;
+                    if (countIn === 0) return null;
+
+                    return (
+                      <button
+                        key={c.id}
+                        disabled={isTransferring}
+                        onClick={async () => {
+                          if (
+                            confirm(
+                              `Retirer ${countIn} prospect(s) de la campagne "${c.display_name}" ?`,
+                            )
+                          ) {
+                            await handleRemoveFromCampaignByIds(
+                              selectedIds.filter((id) => members.includes(id)),
+                            );
+                          }
+                        }}
+                        className="w-full px-3 py-2 rounded-lg text-left text-[11px] font-medium text-white/60 hover:text-red-400 hover:bg-red-500/5 transition-colors flex items-center justify-between"
+                      >
+                        <span className="truncate mr-2">{c.display_name}</span>
+                        <span className="text-[8px] opacity-40 shrink-0">
+                          ({countIn} présents)
+                        </span>
+                      </button>
+                    );
+                  })}
+
+                  <div className="h-px bg-white/5 my-1" />
+                  <p className="px-3 py-2 text-[9px] font-bold text-white/20 uppercase tracking-[0.2em] mb-1">
+                    Des listes
+                  </p>
+
+                  {contactLists.map((l) => {
+                    const members = selectedMembership.lists[l.id] || [];
+                    const countIn = selectedIds.filter((id) =>
+                      members.includes(id),
+                    ).length;
+                    if (countIn === 0) return null;
+
+                    return (
+                      <button
+                        key={l.id}
+                        disabled={isTransferring}
+                        onClick={async () => {
+                          if (
+                            confirm(
+                              `Retirer ${countIn} prospect(s) de la liste "${l.name}" ?`,
+                            )
+                          ) {
+                            await handleRemoveFromListByIds(
+                              selectedIds.filter((id) => members.includes(id)),
+                              l.id,
+                            );
+                          }
+                        }}
+                        className="w-full px-3 py-2 rounded-lg text-left text-[11px] font-medium text-white/60 hover:text-red-400 hover:bg-red-500/5 transition-colors flex items-center justify-between"
+                      >
+                        <span className="truncate mr-2">{l.name}</span>
+                        <span className="text-[8px] opacity-40 shrink-0">
+                          ({countIn} présents)
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
               <Button
                 onClick={() => handleDelete(selectedIds)}
                 disabled={isDeleting}
-                variant="destructive"
-                className="bg-red-500/10 hover:bg-red-500 text-red-500 hover:text-white border border-red-500/20 gap-2 h-10 px-4"
+                variant="ghost"
+                className="h-9 gap-2 text-[10px] font-bold uppercase tracking-widest text-red-500/60 hover:text-red-400 hover:bg-red-500/5"
               >
                 {isDeleting ? (
-                  <Loader2 className="size-4 animate-spin" />
+                  <Loader2 className="size-3.5 animate-spin" />
                 ) : (
-                  <Trash2 className="size-4" />
+                  <Trash2 className="size-3.5" />
                 )}
-                Supprimer la sélection
+                Supprimer
               </Button>
+
+              <div className="w-[1px] h-4 bg-white/5 mx-2" />
+
               <Button
-                variant="ghost"
                 onClick={() => setSelectedIds([])}
-                className="text-white/40 hover:text-white h-10 px-4"
+                variant="ghost"
+                className="h-9 px-4 text-[10px] font-bold uppercase tracking-widest text-white/40 hover:text-white"
               >
                 Annuler
               </Button>

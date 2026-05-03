@@ -1,15 +1,26 @@
 "use server";
 
-import { createSupabaseServerClient, createSupabaseServiceClient } from "@/lib/supabase/server";
+import {
+  createSupabaseServerClient,
+  createSupabaseServiceClient,
+} from "@/lib/supabase/server";
 import { getUserWithProfile } from "@/lib/auth";
-import { ClientFlow, Campaign, CampaignStatus, WorkflowStepWithAgent } from "@/types/flows";
+import {
+  ClientFlow,
+  Campaign,
+  CampaignStatus,
+  WorkflowStepWithAgent,
+} from "@/types/flows";
 import { revalidatePath } from "next/cache";
 import {
   getOpenAIKeyForClient,
   qualifyProspectWithLLM,
 } from "@/lib/prospecting/qualification";
 import { preScoreProspect } from "@/lib/prospecting/scoring";
-import { logCampaignActivity, logCampaignActivities } from "@/lib/flows/activity";
+import {
+  logCampaignActivity,
+  logCampaignActivities,
+} from "@/lib/flows/activity";
 import { generateSequenceForCampaign } from "./sequences";
 import { personalizeSequenceForProspect } from "@/lib/prospecting/personalization";
 import { enqueueExtensionActionsForQualifiedProspect } from "@/lib/extension/sequence-runner";
@@ -37,6 +48,7 @@ type ProspectingCampaignConfig = {
     sector?: string;
     location?: string;
     decision_maker?: string;
+    selected_days?: number[];
   };
   injection?: {
     auto_add?: boolean;
@@ -49,15 +61,18 @@ type ProspectingCampaignConfig = {
 // ---------------------------------------------------------------------------
 // GET: All flows for the current client
 // ---------------------------------------------------------------------------
-export async function getClientFlows(): Promise<{ data: ClientFlow[] | null; error: string | null }> {
+export async function getClientFlows(): Promise<{
+  data: ClientFlow[] | null;
+  error: string | null;
+}> {
   const user = await getUserWithProfile();
-  
+
   if (!user || !user.profile?.client_id) {
     return { data: null, error: "Non authentifié ou client non trouvé" };
   }
 
   const supabase = await createSupabaseServerClient();
-  
+
   const { data, error } = await supabase
     .from("client_flows")
     .select("*")
@@ -75,29 +90,33 @@ export async function getClientFlows(): Promise<{ data: ClientFlow[] | null; err
 // ---------------------------------------------------------------------------
 // GET: All campaigns for a specific flow
 // ---------------------------------------------------------------------------
-export async function getFlowCampaigns(flowId: string): Promise<{ data: Campaign[] | null; error: string | null }> {
+export async function getFlowCampaigns(
+  flowId: string,
+): Promise<{ data: Campaign[] | null; error: string | null }> {
   const supabase = await createSupabaseServerClient();
-  
+
   const { data, error } = await supabase
     .from("campaigns")
     .select("*")
     .eq("flow_id", flowId)
     .order("created_at", { ascending: false });
 
-  if (error) return { data: null, error: "Erreur lors du chargement des campagnes" };
+  if (error)
+    return { data: null, error: "Erreur lors du chargement des campagnes" };
   return { data, error: null };
 }
 
 // ---------------------------------------------------------------------------
 // GET: Detail of a single campaign + its workflow steps
 // ---------------------------------------------------------------------------
-export async function getCampaignDetail(campaignId: string): Promise<{ 
-  campaign: Campaign | null; 
-  steps: WorkflowStepWithAgent[] | null; 
-  error: string | null 
+export async function getCampaignDetail(campaignId: string): Promise<{
+  campaign: Campaign | null;
+  steps: WorkflowStepWithAgent[] | null;
+  error: string | null;
 }> {
   const user = await getUserWithProfile();
-  if (!user || !user.profile?.client_id) return { campaign: null, steps: null, error: "Non authentifié" };
+  if (!user || !user.profile?.client_id)
+    return { campaign: null, steps: null, error: "Non authentifié" };
 
   const supabase = await createSupabaseServerClient();
 
@@ -107,12 +126,14 @@ export async function getCampaignDetail(campaignId: string): Promise<{
     .eq("id", campaignId)
     .single();
 
-  if (campError || !campaign) return { campaign: null, steps: null, error: "Campagne non trouvée" };
+  if (campError || !campaign)
+    return { campaign: null, steps: null, error: "Campagne non trouvée" };
 
   if (campaign.sequence_id) {
     const { data: steps, error: stepsError } = await supabase
       .from("sequence_steps")
-      .select(`
+      .select(
+        `
         *,
         agent:agents (
           name,
@@ -120,12 +141,17 @@ export async function getCampaignDetail(campaignId: string): Promise<{
           role,
           description
         )
-      `)
+      `,
+      )
       .eq("sequence_id", campaign.sequence_id)
       .order("step_order", { ascending: true });
 
     if (stepsError) {
-      return { campaign, steps: null, error: "Erreur lors du chargement des étapes" };
+      return {
+        campaign,
+        steps: null,
+        error: "Erreur lors du chargement des étapes",
+      };
     }
 
     const flattenedSteps = (steps || []).map((s: any) => ({
@@ -133,7 +159,7 @@ export async function getCampaignDetail(campaignId: string): Promise<{
       agent_name: s.agent?.name,
       agent_slug: s.agent?.slug,
       agent_role: s.agent?.role,
-      agent_description: s.agent?.description
+      agent_description: s.agent?.description,
     }));
 
     return { campaign, steps: flattenedSteps, error: null };
@@ -151,9 +177,9 @@ export async function activateFlow(flowId: string, config: any) {
 
   const { error: flowError } = await supabase
     .from("client_flows")
-    .update({ 
+    .update({
       status: "active",
-      config: config,  // All campaign-specific settings live here
+      config: config, // All campaign-specific settings live here
     })
     .eq("id", flowId);
 
@@ -178,7 +204,11 @@ export async function activateFlow(flowId: string, config: any) {
 export async function updateCampaignConfig(
   campaignId: string,
   config: {
-    target_icp?: { sectors?: string[]; company_size?: string[]; locations?: string[] };
+    target_icp?: {
+      sectors?: string[];
+      company_size?: string[];
+      locations?: string[];
+    };
     personas?: string[];
     tone?: string;
     prospection?: {
@@ -189,6 +219,7 @@ export async function updateCampaignConfig(
       sector?: string;
       location?: string;
       decision_maker?: string;
+      selected_days?: number[];
     };
     injection?: {
       auto_add?: boolean;
@@ -197,7 +228,7 @@ export async function updateCampaignConfig(
     };
     display_name?: string;
     objective?: string;
-  }
+  },
 ): Promise<{ success?: boolean; error?: string }> {
   const user = await getUserWithProfile();
   if (!user || !user.profile?.client_id) return { error: "Non authentifié" };
@@ -248,10 +279,11 @@ export async function updateCampaignConfig(
 // ---------------------------------------------------------------------------
 export async function createProspectingCampaign(
   displayName: string,
-  initialConfig?: ProspectingCampaignConfig
+  initialConfig?: ProspectingCampaignConfig,
 ): Promise<{ data: Campaign | null; error: string | null }> {
   const user = await getUserWithProfile();
-  if (!user || !user.profile?.client_id) return { data: null, error: "Non authentifié" };
+  if (!user || !user.profile?.client_id)
+    return { data: null, error: "Non authentifié" };
 
   const supabase = await createSupabaseServerClient();
   const serviceClient = createSupabaseServiceClient();
@@ -272,11 +304,12 @@ export async function createProspectingCampaign(
         flow_key: "prospecting",
         display_name: "Prospection IA",
         status: "active",
-        route: "/flows/prospecting"
+        route: "/flows/prospecting",
       })
       .select()
       .single();
-    if (flowErr || !newFlow) return { data: null, error: "Impossible de créer le flux parent" };
+    if (flowErr || !newFlow)
+      return { data: null, error: "Impossible de créer le flux parent" };
     flow = newFlow;
   }
 
@@ -310,13 +343,25 @@ export async function createProspectingCampaign(
       name: displayName,
       display_name: displayName,
       objective: defaultConfig.offer || null,
-      target_description: defaultConfig.target_description || defaultConfig.offer || null,
+      target_description:
+        defaultConfig.target_description || defaultConfig.offer || null,
       target_roles: defaultConfig.personas || [],
-      target_industries: defaultConfig.target_icp?.sectors || defaultConfig.target_icp?.industries || [],
-      target_locations: defaultConfig.target_icp?.locations || defaultConfig.target_icp?.geographies || [],
-      target_company_size: defaultConfig.target_icp?.company_size || defaultConfig.target_icp?.company_sizes || [],
+      target_industries:
+        defaultConfig.target_icp?.sectors ||
+        defaultConfig.target_icp?.industries ||
+        [],
+      target_locations:
+        defaultConfig.target_icp?.locations ||
+        defaultConfig.target_icp?.geographies ||
+        [],
+      target_company_size:
+        defaultConfig.target_icp?.company_size ||
+        defaultConfig.target_icp?.company_sizes ||
+        [],
       tone: defaultConfig.tone || null,
-      source: Array.isArray(defaultConfig.sources) ? defaultConfig.sources[0] : defaultConfig.source || null,
+      source: Array.isArray(defaultConfig.sources)
+        ? defaultConfig.sources[0]
+        : defaultConfig.source || null,
       status: "active",
       config: defaultConfig,
     })
@@ -333,22 +378,28 @@ export async function createProspectingCampaign(
   try {
     const { data: seqData } = await serviceClient
       .from("sequences")
-      .insert({ client_id: user.profile.client_id, name: `${displayName} Sequence` })
+      .insert({
+        client_id: user.profile.client_id,
+        name: `${displayName} Sequence`,
+      })
       .select()
       .single();
-    
+
     if (seqData) {
       await serviceClient
         .from("campaigns")
         .update({ sequence_id: seqData.id })
         .eq("id", campaign.id);
-        
+
       await serviceClient.from("sequence_steps").insert({
         sequence_id: seqData.id,
         step_order: 1,
         name: "Initialisation",
         action_type: "linkedin",
-        config: { channel: "LinkedIn", message: "Génération de la séquence en cours..." }
+        config: {
+          channel: "LinkedIn",
+          message: "Génération de la séquence en cours...",
+        },
       });
     }
   } catch (seedErr) {
@@ -359,10 +410,13 @@ export async function createProspectingCampaign(
   const genResult = await generateAndSaveSequence(campaign.id);
   if (genResult.error) {
     console.error("Auto-generation of sequence failed:", genResult.error);
-    // If the sequence fails, we might still want to return the campaign 
-    // but with a warning or the error itself. 
+    // If the sequence fails, we might still want to return the campaign
+    // but with a warning or the error itself.
     // Given the user feedback, it's better to surface the error.
-    return { data: campaign, error: `Campagne créée mais la génération de séquence a échoué: ${genResult.error}` };
+    return {
+      data: campaign,
+      error: `Campagne créée mais la génération de séquence a échoué: ${genResult.error}`,
+    };
   }
 
   revalidatePath(`/flows/prospecting/${campaign.id}`);
@@ -370,7 +424,9 @@ export async function createProspectingCampaign(
   return { data: campaign, error: null };
 }
 
-export async function deleteCampaign(campaignId: string): Promise<{ success?: boolean; error?: string }> {
+export async function deleteCampaign(
+  campaignId: string,
+): Promise<{ success?: boolean; error?: string }> {
   const supabase = await createSupabaseServerClient();
 
   // The DB should handle cascading deletions for sequence_steps, prospects, etc.
@@ -393,7 +449,7 @@ export async function deleteCampaign(campaignId: string): Promise<{ success?: bo
 // ---------------------------------------------------------------------------
 export async function setCampaignStatus(
   campaignId: string,
-  status: CampaignStatus
+  status: CampaignStatus,
 ): Promise<{ success?: boolean; error?: string }> {
   const supabase = await createSupabaseServerClient();
 
@@ -411,7 +467,10 @@ export async function setCampaignStatus(
 // ---------------------------------------------------------------------------
 // SAVE SEQUENCE STEPS: Map frontend tree steps to DB sequence_steps
 // ---------------------------------------------------------------------------
-export async function saveSequenceSteps(campaignId: string, steps: any[]): Promise<{ success?: boolean; error?: string }> {
+export async function saveSequenceSteps(
+  campaignId: string,
+  steps: any[],
+): Promise<{ success?: boolean; error?: string }> {
   const user = await getUserWithProfile();
   if (!user || !user.profile?.client_id) return { error: "Non authentifié" };
 
@@ -433,10 +492,13 @@ export async function saveSequenceSteps(campaignId: string, steps: any[]): Promi
   if (!seqId) {
     const { data: newSeq, error: seqError } = await serviceClient
       .from("sequences")
-      .insert({ client_id: user.profile.client_id, name: `${campaign.display_name || 'Campagne'} Sequence` })
+      .insert({
+        client_id: user.profile.client_id,
+        name: `${campaign.display_name || "Campagne"} Sequence`,
+      })
       .select()
       .single();
-    
+
     if (seqError || !newSeq) return { error: "Erreur création séquence" };
     seqId = newSeq.id;
 
@@ -456,10 +518,12 @@ export async function saveSequenceSteps(campaignId: string, steps: any[]): Promi
       step_order: index + 1,
       name: s.name,
       action_type: s.type,
-      config: { ...s.config, channel: s.channel }
+      config: { ...s.config, channel: s.channel },
     }));
 
-    const { error: insertError } = await serviceClient.from("sequence_steps").insert(rows);
+    const { error: insertError } = await serviceClient
+      .from("sequence_steps")
+      .insert(rows);
     if (insertError) {
       console.error("Insert steps error:", insertError);
       return { error: "Erreur lors de l'enregistrement des étapes" };
@@ -474,7 +538,9 @@ export async function saveSequenceSteps(campaignId: string, steps: any[]): Promi
 // ---------------------------------------------------------------------------
 // GENERATE & SAVE SEQUENCE: Use AI to generate a sequence and save it
 // ---------------------------------------------------------------------------
-export async function generateAndSaveSequence(campaignId: string): Promise<{ success?: boolean; error?: string }> {
+export async function generateAndSaveSequence(
+  campaignId: string,
+): Promise<{ success?: boolean; error?: string }> {
   const user = await getUserWithProfile();
   if (!user || !user.profile?.client_id) return { error: "Non authentifié" };
 
@@ -497,21 +563,33 @@ export async function generateAndSaveSequence(campaignId: string): Promise<{ suc
     return await saveSequenceSteps(campaignId, generated.steps);
   } catch (error: any) {
     console.error("Error generating sequence:", error);
-    
+
     // Check if it's a Zod error (which is what we see in the screenshot)
-    if (error.name === "ZodError" || (error.issues && Array.isArray(error.issues))) {
-      return { error: "L'IA a généré une séquence au format invalide. Veuillez réessayer (cela arrive parfois)." };
+    if (
+      error.name === "ZodError" ||
+      (error.issues && Array.isArray(error.issues))
+    ) {
+      return {
+        error:
+          "L'IA a généré une séquence au format invalide. Veuillez réessayer (cela arrive parfois).",
+      };
     }
-    
-    return { error: error.message || "Erreur lors de la génération de la séquence" };
+
+    return {
+      error: error.message || "Erreur lors de la génération de la séquence",
+    };
   }
 }
 
-export async function deleteProspects(ids: string[]): Promise<{ success: boolean; error?: string }> {
-  if (!ids || ids.length === 0) return { success: false, error: "Aucun ID fourni" };
-  
+export async function deleteProspects(
+  ids: string[],
+): Promise<{ success: boolean; error?: string }> {
+  if (!ids || ids.length === 0)
+    return { success: false, error: "Aucun ID fourni" };
+
   const user = await getUserWithProfile();
-  if (!user || !user.profile?.client_id) return { success: false, error: "Non authentifié" };
+  if (!user || !user.profile?.client_id)
+    return { success: false, error: "Non authentifié" };
   const clientId = user.profile.client_id;
 
   const supabase = await createSupabaseServerClient();
@@ -531,22 +609,26 @@ export async function deleteProspects(ids: string[]): Promise<{ success: boolean
 
   // Log activities
   if (prospects && prospects.length > 0) {
-    await logCampaignActivities(prospects.map(p => ({
-      clientId,
-      campaignId: p.campaign_id,
-      action: "prospect.deleted",
-      entityType: "prospect",
-      entityId: p.id,
-      actorType: "user",
-      metadata: {
-        prospect_name: p.decision_maker || "un prospect",
-        campaign_id: p.campaign_id
-      }
-    })));
+    await logCampaignActivities(
+      prospects.map((p) => ({
+        clientId,
+        campaignId: p.campaign_id,
+        action: "prospect.deleted",
+        entityType: "prospect",
+        entityId: p.id,
+        actorType: "user",
+        metadata: {
+          prospect_name: p.decision_maker || "un prospect",
+          campaign_id: p.campaign_id,
+        },
+      })),
+    );
 
     // Revalidate specific campaign pages
-    const uniqueCampaignIds = Array.from(new Set(prospects.map(p => p.campaign_id).filter(Boolean)));
-    uniqueCampaignIds.forEach(cid => {
+    const uniqueCampaignIds = Array.from(
+      new Set(prospects.map((p) => p.campaign_id).filter(Boolean)),
+    );
+    uniqueCampaignIds.forEach((cid) => {
       revalidatePath(`/flows/prospecting/${cid}`);
     });
   }
@@ -555,16 +637,16 @@ export async function deleteProspects(ids: string[]): Promise<{ success: boolean
   return { success: true };
 }
 
-
 async function qualifyProspectRecord(
   supabase: any,
   clientId: string,
   prospectId: string,
-  apiKey: string
+  apiKey: string,
 ) {
   const { data: prospect, error: prospectError } = await supabase
     .from("prospects")
-    .select(`
+    .select(
+      `
       *,
       company:companies (
         industry,
@@ -574,7 +656,8 @@ async function qualifyProspectRecord(
         linkedin_url,
         location
       )
-    `)
+    `,
+    )
     .eq("id", prospectId)
     .eq("client_id", clientId)
     .single();
@@ -616,20 +699,21 @@ async function qualifyProspectRecord(
       pre_score_level: preScore.level,
     },
     campaign,
-    apiKey
+    apiKey,
   );
 
-  const finalQualificationStatus = qualification.qualification_level === "low" ? "rejected" : "qualified";
+  const finalQualificationStatus = "qualified";
 
-  // Personalize sequence if qualified
+  // Personalize sequence after qualification. Human confirmation decides whether
+  // the runner is allowed to enqueue and execute the sequence.
   let personalizedSequence = null;
-  if (finalQualificationStatus === "qualified" && sequenceSteps.length > 0) {
+  if (sequenceSteps.length > 0) {
     try {
       personalizedSequence = await personalizeSequenceForProspect(
         prospect,
         campaign,
         sequenceSteps,
-        qualification
+        qualification,
       );
     } catch (err) {
       console.error("Error personalizing sequence:", err);
@@ -641,10 +725,17 @@ async function qualifyProspectRecord(
     .update({
       full_name: prospect.full_name || prospect.decision_maker,
       role_title: prospect.role_title || prospect.role,
-      company_description: prospect.company_description || prospect.company?.description || prospect.extra_data?.about || null,
+      company_description:
+        prospect.company_description ||
+        prospect.company?.description ||
+        prospect.extra_data?.about ||
+        null,
       profile_url: prospect.profile_url || prospect.linkedin_url,
       website_url: prospect.website_url || prospect.website,
-      raw_data: prospect.raw_data && Object.keys(prospect.raw_data).length > 0 ? prospect.raw_data : prospect.extra_data || {},
+      raw_data:
+        prospect.raw_data && Object.keys(prospect.raw_data).length > 0
+          ? prospect.raw_data
+          : prospect.extra_data || {},
       pre_score: preScore.score,
       pre_score_level: preScore.level,
       fit_score: preScore.score,
@@ -658,6 +749,10 @@ async function qualifyProspectRecord(
           personalization_hooks: qualification.personalization_hooks,
           qualified_at: new Date().toISOString(),
         },
+        sequence_decision: {
+          status: "pending",
+          decided_at: null,
+        },
         personalized_sequence: personalizedSequence,
       },
       status: finalQualificationStatus,
@@ -665,7 +760,8 @@ async function qualifyProspectRecord(
     })
     .eq("id", prospectId)
     .eq("client_id", clientId)
-    .select(`
+    .select(
+      `
       id,
       campaign_id,
       company_name,
@@ -702,33 +798,12 @@ async function qualifyProspectRecord(
         linkedin_url,
         location
       )
-    `)
+    `,
+    )
     .single();
 
   if (updateError || !updated) {
     throw new Error("Impossible d'enregistrer la qualification");
-  }
-
-  let extensionActionsCreated = 0;
-  let extensionActionsSkipped = 0;
-  if (finalQualificationStatus === "qualified") {
-    try {
-      const enqueueResult = await enqueueExtensionActionsForQualifiedProspect({
-        supabase,
-        clientId,
-        prospect: {
-          ...updated,
-          client_id: clientId,
-        },
-        campaign,
-        sequenceSteps,
-        personalizedSequence,
-      });
-      extensionActionsCreated = enqueueResult.created;
-      extensionActionsSkipped = enqueueResult.skipped;
-    } catch (error) {
-      console.error("Error enqueueing extension actions:", error);
-    }
   }
 
   await logCampaignActivity({
@@ -739,34 +814,48 @@ async function qualifyProspectRecord(
     entityId: updated.id,
     actorType: "user",
     metadata: {
-      prospect_name: updated.decision_maker || updated.full_name || "un prospect",
+      prospect_name:
+        updated.decision_maker || updated.full_name || "un prospect",
       company_name: updated.company_name || null,
       qualification_level: updated.qualification_level,
       qualification_status: updated.qualification_status,
       fit_score: updated.fit_score,
-      extension_actions_created: extensionActionsCreated,
-      extension_actions_skipped: extensionActionsSkipped,
+      sequence_decision: "pending",
+      extension_actions_created: 0,
+      extension_actions_skipped: 0,
     },
   });
 
   return updated;
 }
 
-export async function qualifyProspect(prospectId: string): Promise<{ data: any | null; error: string | null }> {
+export async function qualifyProspect(
+  prospectId: string,
+): Promise<{ data: any | null; error: string | null }> {
   const user = await getUserWithProfile();
-  if (!user || !user.profile?.client_id) return { data: null, error: "Non authentifié" };
+  if (!user || !user.profile?.client_id)
+    return { data: null, error: "Non authentifié" };
 
   try {
     const apiKey = await getOpenAIKeyForClient(user.profile.client_id);
     const supabase = await createSupabaseServerClient();
-    const data = await qualifyProspectRecord(supabase, user.profile.client_id, prospectId, apiKey);
+    const data = await qualifyProspectRecord(
+      supabase,
+      user.profile.client_id,
+      prospectId,
+      apiKey,
+    );
 
     revalidatePath("/flows/prospecting");
-    if (data.campaign_id) revalidatePath(`/flows/prospecting/${data.campaign_id}`);
+    if (data.campaign_id)
+      revalidatePath(`/flows/prospecting/${data.campaign_id}`);
 
     return { data, error: null };
   } catch (error: any) {
-    return { data: null, error: error.message || "Erreur lors de la qualification" };
+    return {
+      data: null,
+      error: error.message || "Erreur lors de la qualification",
+    };
   }
 }
 
@@ -777,7 +866,11 @@ export async function qualifyProspects(prospectIds: string[]): Promise<{
 }> {
   const user = await getUserWithProfile();
   if (!user || !user.profile?.client_id) {
-    return { data: [], errors: prospectIds.map((id) => ({ id, error: "Non authentifié" })), success: false };
+    return {
+      data: [],
+      errors: prospectIds.map((id) => ({ id, error: "Non authentifié" })),
+      success: false,
+    };
   }
 
   const ids = Array.from(new Set(prospectIds)).filter(Boolean);
@@ -790,7 +883,10 @@ export async function qualifyProspects(prospectIds: string[]): Promise<{
   } catch (error: any) {
     return {
       data: [],
-      errors: ids.map((id) => ({ id, error: error.message || "Clé OpenAI introuvable" })),
+      errors: ids.map((id) => ({
+        id,
+        error: error.message || "Clé OpenAI introuvable",
+      })),
       success: false,
     };
   }
@@ -800,32 +896,334 @@ export async function qualifyProspects(prospectIds: string[]): Promise<{
 
   for (const id of ids) {
     try {
-      data.push(await qualifyProspectRecord(supabase, user.profile.client_id, id, apiKey));
+      data.push(
+        await qualifyProspectRecord(
+          supabase,
+          user.profile.client_id,
+          id,
+          apiKey,
+        ),
+      );
     } catch (error: any) {
-      errors.push({ id, error: error.message || "Erreur lors de la qualification" });
+      errors.push({
+        id,
+        error: error.message || "Erreur lors de la qualification",
+      });
     }
   }
 
   revalidatePath("/flows/prospecting");
   data.forEach((prospect) => {
-    if (prospect.campaign_id) revalidatePath(`/flows/prospecting/${prospect.campaign_id}`);
+    if (prospect.campaign_id)
+      revalidatePath(`/flows/prospecting/${prospect.campaign_id}`);
   });
 
   return { data, errors, success: errors.length === 0 };
 }
 
+type ProspectSequenceDecision = "confirmed" | "paused" | "removed";
+
+const PROSPECT_WITH_COMPANY_SELECT = `
+  id,
+  campaign_id,
+  company_name,
+  decision_maker,
+  role,
+  fit_score,
+  status,
+  priority,
+  photo_url,
+  website,
+  location,
+  linkedin_url,
+  email,
+  phone,
+  source,
+  extra_data,
+  created_at,
+  full_name,
+  role_title,
+  company_description,
+  profile_url,
+  website_url,
+  raw_data,
+  pre_score,
+  pre_score_level,
+  qualification_status,
+  qualification_level,
+  qualification_reason,
+  company:companies (
+    industry,
+    size_range,
+    description,
+    website,
+    linkedin_url,
+    location
+  )
+`;
+
+async function cancelPendingSequenceActions(
+  supabase: any,
+  clientId: string,
+  prospectId: string,
+  campaignId?: string | null,
+) {
+  let actionQuery = supabase
+    .from("extension_actions")
+    .select("id, message_id")
+    .eq("client_id", clientId)
+    .eq("prospect_id", prospectId)
+    .in("status", ["pending", "ready"]);
+
+  if (campaignId) actionQuery = actionQuery.eq("campaign_id", campaignId);
+
+  const { data: actions } = await actionQuery;
+  const actionIds = (actions || [])
+    .map((action: any) => action.id)
+    .filter(Boolean);
+  const messageIds = (actions || [])
+    .map((action: any) => action.message_id)
+    .filter(Boolean);
+
+  if (actionIds.length > 0) {
+    await supabase
+      .from("extension_actions")
+      .update({
+        status: "cancelled",
+        dedupe_key: null,
+        error_message: "Sequence mise en pause ou retiree par l'utilisateur",
+        updated_at: new Date().toISOString(),
+      })
+      .in("id", actionIds);
+  }
+
+  if (messageIds.length > 0) {
+    await supabase
+      .from("messages")
+      .update({
+        status: "rejected",
+        updated_at: new Date().toISOString(),
+      })
+      .in("id", messageIds)
+      .eq("client_id", clientId)
+      .eq("status", "ready_to_send");
+  }
+
+  return actionIds.length;
+}
+
+export async function setProspectSequenceDecision(
+  prospectId: string,
+  decision: ProspectSequenceDecision,
+): Promise<{
+  success: boolean;
+  data?: any;
+  removed?: boolean;
+  created?: number;
+  skipped?: number;
+  cancelled?: number;
+  error?: string;
+}> {
+  const user = await getUserWithProfile();
+  if (!user || !user.profile?.client_id)
+    return { success: false, error: "Non authentifié" };
+
+  const clientId = user.profile.client_id;
+  const supabase = await createSupabaseServerClient();
+
+  const { data: prospect, error: prospectError } = await supabase
+    .from("prospects")
+    .select(
+      "*, company:companies (industry, size_range, description, website, linkedin_url, location)",
+    )
+    .eq("id", prospectId)
+    .eq("client_id", clientId)
+    .single();
+
+  if (prospectError || !prospect) {
+    return { success: false, error: "Prospect introuvable" };
+  }
+
+  const campaignId = prospect.campaign_id;
+  const decidedAt = new Date().toISOString();
+  const currentExtraData = prospect.extra_data || {};
+
+  try {
+    if (decision === "removed") {
+      const cancelled = await cancelPendingSequenceActions(
+        supabase,
+        clientId,
+        prospectId,
+        campaignId,
+      );
+
+      const { error } = await supabase
+        .from("prospects")
+        .update({
+          campaign_id: null,
+          status: "rejected_by_user",
+          extra_data: {
+            ...currentExtraData,
+            sequence_decision: {
+              status: "removed",
+              decided_at: decidedAt,
+            },
+          },
+          updated_at: decidedAt,
+        })
+        .eq("id", prospectId)
+        .eq("client_id", clientId);
+
+      if (error) throw new Error(error.message);
+
+      if (campaignId) {
+        await logCampaignActivity({
+          clientId,
+          campaignId,
+          action: "prospect.sequence.removed",
+          entityType: "prospect",
+          entityId: prospectId,
+          actorType: "user",
+          metadata: {
+            prospect_name:
+              prospect.decision_maker || prospect.full_name || "un prospect",
+            campaign_id: campaignId,
+            cancelled_actions: cancelled,
+          },
+        });
+        revalidatePath(`/flows/prospecting/${campaignId}`);
+      }
+      revalidatePath("/flows/prospecting");
+      return { success: true, removed: true, cancelled };
+    }
+
+    if (!campaignId) {
+      return {
+        success: false,
+        error: "Ce prospect n'est rattaché à aucune campagne",
+      };
+    }
+
+    const cancelled =
+      decision === "paused"
+        ? await cancelPendingSequenceActions(
+            supabase,
+            clientId,
+            prospectId,
+            campaignId,
+          )
+        : 0;
+
+    const sequenceDecision = {
+      status: decision,
+      decided_at: decidedAt,
+    };
+
+    const { data: updated, error: updateError } = await supabase
+      .from("prospects")
+      .update({
+        status: "qualified",
+        qualification_status: "qualified",
+        extra_data: {
+          ...currentExtraData,
+          sequence_decision: sequenceDecision,
+        },
+        updated_at: decidedAt,
+      })
+      .eq("id", prospectId)
+      .eq("client_id", clientId)
+      .select(PROSPECT_WITH_COMPANY_SELECT)
+      .single();
+
+    if (updateError || !updated) {
+      throw new Error(
+        updateError?.message || "Impossible de mettre à jour le prospect",
+      );
+    }
+
+    let created = 0;
+    let skipped = 0;
+
+    if (decision === "confirmed") {
+      const { data: campaign, error: campaignError } = await supabase
+        .from("campaigns")
+        .select("*")
+        .eq("id", campaignId)
+        .single();
+
+      if (campaignError || !campaign) throw new Error("Campagne introuvable");
+
+      let sequenceSteps: any[] = [];
+      if (campaign.sequence_id) {
+        const { data: steps } = await supabase
+          .from("sequence_steps")
+          .select("*")
+          .eq("sequence_id", campaign.sequence_id)
+          .order("step_order", { ascending: true });
+        sequenceSteps = steps || [];
+      }
+
+      const enqueueResult = await enqueueExtensionActionsForQualifiedProspect({
+        supabase,
+        clientId,
+        prospect: {
+          ...updated,
+          client_id: clientId,
+        },
+        campaign,
+        sequenceSteps,
+        personalizedSequence: updated.extra_data?.personalized_sequence,
+      });
+      created = enqueueResult.created;
+      skipped = enqueueResult.skipped;
+    }
+
+    await logCampaignActivity({
+      clientId,
+      campaignId,
+      action: `prospect.sequence.${decision}`,
+      entityType: "prospect",
+      entityId: prospectId,
+      actorType: "user",
+      metadata: {
+        prospect_name:
+          updated.decision_maker || updated.full_name || "un prospect",
+        campaign_id: campaignId,
+        sequence_decision: decision,
+        extension_actions_created: created,
+        extension_actions_skipped: skipped,
+        cancelled_actions: cancelled,
+      },
+    });
+
+    revalidatePath("/flows/prospecting");
+    revalidatePath(`/flows/prospecting/${campaignId}`);
+    return { success: true, data: updated, created, skipped, cancelled };
+  } catch (error: any) {
+    return {
+      success: false,
+      error: error.message || "Erreur lors de la mise à jour de la séquence",
+    };
+  }
+}
+
 // ---------------------------------------------------------------------------
 // GET: All prospects for the current organization (client)
 // ---------------------------------------------------------------------------
-export async function getOrganizationProspects(): Promise<{ data: any[] | null; error: string | null }> {
+export async function getOrganizationProspects(): Promise<{
+  data: any[] | null;
+  error: string | null;
+}> {
   const user = await getUserWithProfile();
-  if (!user || !user.profile?.client_id) return { data: null, error: "Non authentifié" };
+  if (!user || !user.profile?.client_id)
+    return { data: null, error: "Non authentifié" };
 
   const supabase = await createSupabaseServerClient();
 
   const { data, error } = await supabase
     .from("prospects")
-    .select(`
+    .select(
+      `
       id, 
       campaign_id,
       company_name, 
@@ -863,20 +1261,29 @@ export async function getOrganizationProspects(): Promise<{ data: any[] | null; 
         linkedin_url,
         location
       )
-    `)
+    `,
+    )
     .eq("client_id", user.profile.client_id)
     .order("created_at", { ascending: false });
 
-  if (error) return { data: null, error: "Erreur lors du chargement des prospects de l'organisation" };
+  if (error)
+    return {
+      data: null,
+      error: "Erreur lors du chargement des prospects de l'organisation",
+    };
   return { data, error: null };
 }
 
 // ---------------------------------------------------------------------------
 // GET: All contact lists for the current organization
 // ---------------------------------------------------------------------------
-export async function getContactLists(): Promise<{ data: any[] | null; error: string | null }> {
+export async function getContactLists(): Promise<{
+  data: any[] | null;
+  error: string | null;
+}> {
   const user = await getUserWithProfile();
-  if (!user || !user.profile?.client_id) return { data: null, error: "Non authentifié" };
+  if (!user || !user.profile?.client_id)
+    return { data: null, error: "Non authentifié" };
 
   const supabase = await createSupabaseServerClient();
 
@@ -886,19 +1293,23 @@ export async function getContactLists(): Promise<{ data: any[] | null; error: st
     .eq("client_id", user.profile.client_id)
     .order("created_at", { ascending: false });
 
-  if (error) return { data: null, error: "Erreur lors du chargement des listes" };
+  if (error)
+    return { data: null, error: "Erreur lors du chargement des listes" };
   return { data, error: null };
 }
 
 // ---------------------------------------------------------------------------
 // GET: Prospects for a specific contact list
 // ---------------------------------------------------------------------------
-export async function getProspectsByList(listId: string): Promise<{ data: any[] | null; error: string | null }> {
+export async function getProspectsByList(
+  listId: string,
+): Promise<{ data: any[] | null; error: string | null }> {
   const supabase = await createSupabaseServerClient();
 
   const { data, error } = await supabase
     .from("prospect_list_members")
-    .select(`
+    .select(
+      `
       prospect:prospects (
         id, 
         campaign_id,
@@ -938,12 +1349,19 @@ export async function getProspectsByList(listId: string): Promise<{ data: any[] 
           location
         )
       )
-    `)
+    `,
+    )
     .eq("list_id", listId);
 
-  if (error) return { data: null, error: "Erreur lors du chargement des prospects de la liste" };
-  
-  const flattened = (data || []).map((item: any) => item.prospect).filter(Boolean);
+  if (error)
+    return {
+      data: null,
+      error: "Erreur lors du chargement des prospects de la liste",
+    };
+
+  const flattened = (data || [])
+    .map((item: any) => item.prospect)
+    .filter(Boolean);
   return { data: flattened, error: null };
 }
 
@@ -952,7 +1370,7 @@ export async function getProspectsByList(listId: string): Promise<{ data: any[] 
 // ---------------------------------------------------------------------------
 export async function updateProspectPersonalization(
   prospectId: string,
-  personalizedSequence: any
+  personalizedSequence: any,
 ): Promise<{ success?: boolean; error?: string }> {
   const user = await getUserWithProfile();
   if (!user || !user.profile?.client_id) return { error: "Non authentifié" };
@@ -971,8 +1389,8 @@ export async function updateProspectPersonalization(
     .update({
       extra_data: {
         ...(prospect?.extra_data || {}),
-        personalized_sequence: personalizedSequence
-      }
+        personalized_sequence: personalizedSequence,
+      },
     })
     .eq("id", prospectId)
     .eq("client_id", user.profile.client_id);
@@ -986,7 +1404,7 @@ export async function updateProspectPersonalization(
   return { success: true };
 }
 export async function bulkUpdateProspectPersonalizations(
-  updates: { prospectId: string, personalizedSequence: any }[]
+  updates: { prospectId: string; personalizedSequence: any }[],
 ): Promise<{ success?: boolean; error?: string }> {
   const user = await getUserWithProfile();
   if (!user || !user.profile?.client_id) return { error: "Non authentifié" };
@@ -1005,20 +1423,244 @@ export async function bulkUpdateProspectPersonalizations(
 
     const newExtraData = {
       ...(prospect?.extra_data || {}),
-      personalized_sequence: update.personalizedSequence
+      personalized_sequence: update.personalizedSequence,
     };
 
     const { error } = await supabase
       .from("prospects")
       .update({
-        extra_data: newExtraData
+        extra_data: newExtraData,
       })
       .eq("id", update.prospectId)
       .eq("client_id", user.profile.client_id);
 
     if (error) {
-      console.error(`Error updating personalization for ${update.prospectId}:`, error);
+      console.error(
+        `Error updating personalization for ${update.prospectId}:`,
+        error,
+      );
     }
+  }
+
+  revalidatePath("/flows/prospecting");
+  return { success: true };
+}
+
+// ---------------------------------------------------------------------------
+// MOVE: Move prospects to another campaign
+// ---------------------------------------------------------------------------
+export async function moveProspectsToCampaign(
+  prospectIds: string[],
+  targetCampaignId: string,
+): Promise<{ success: boolean; error?: string }> {
+  if (!prospectIds.length)
+    return { success: false, error: "Aucun prospect sélectionné" };
+
+  const user = await getUserWithProfile();
+  if (!user || !user.profile?.client_id)
+    return { success: false, error: "Non authentifié" };
+
+  const supabase = await createSupabaseServerClient();
+
+  // 1. Update campaign_id for these prospects
+  const { error } = await supabase
+    .from("prospects")
+    .update({
+      campaign_id: targetCampaignId,
+      updated_at: new Date().toISOString(),
+    })
+    .in("id", prospectIds)
+    .eq("client_id", user.profile.client_id);
+
+  if (error) {
+    console.error("Move prospects error:", error);
+    return {
+      success: false,
+      error: "Erreur lors du déplacement des prospects",
+    };
+  }
+
+  // 2. Log activity
+  await logCampaignActivity({
+    clientId: user.profile.client_id,
+    campaignId: targetCampaignId,
+    action: "prospects.moved",
+    entityType: "campaign",
+    entityId: targetCampaignId,
+    actorType: "user",
+    metadata: {
+      count: prospectIds.length,
+      target_campaign_id: targetCampaignId,
+    },
+  });
+
+  revalidatePath("/flows/prospecting");
+  revalidatePath(`/flows/prospecting/${targetCampaignId}`);
+  return { success: true };
+}
+
+// ---------------------------------------------------------------------------
+// ADD: Add prospects to a list
+// ---------------------------------------------------------------------------
+export async function addProspectsToList(
+  prospectIds: string[],
+  listId: string,
+): Promise<{ success: boolean; error?: string }> {
+  if (!prospectIds.length)
+    return { success: false, error: "Aucun prospect sélectionné" };
+
+  const user = await getUserWithProfile();
+  if (!user || !user.profile?.client_id)
+    return { success: false, error: "Non authentifié" };
+
+  const supabase = await createSupabaseServerClient();
+
+  const rows = prospectIds.map((pid) => ({
+    prospect_id: pid,
+    list_id: listId,
+  }));
+
+  const { error } = await supabase
+    .from("prospect_list_members")
+    .upsert(rows, { onConflict: "prospect_id,list_id" });
+
+  if (error) {
+    console.error("Add prospects to list error:", error);
+    return { success: false, error: "Erreur lors de l'ajout à la liste" };
+  }
+
+  revalidatePath("/flows/prospecting");
+  return { success: true };
+}
+
+// ---------------------------------------------------------------------------
+// GET: All campaigns for the organization (across all flows)
+// ---------------------------------------------------------------------------
+export async function getOrganizationCampaigns(): Promise<{
+  data: Campaign[] | null;
+  error: string | null;
+}> {
+  const user = await getUserWithProfile();
+  if (!user || !user.profile?.client_id)
+    return { data: null, error: "Non authentifié" };
+
+  const supabase = await createSupabaseServerClient();
+
+  const { data, error } = await supabase
+    .from("campaigns")
+    .select("*")
+    .eq("organization_id", user.profile.client_id)
+    .order("created_at", { ascending: false });
+
+  if (error)
+    return { data: null, error: "Erreur lors du chargement des campagnes" };
+  return { data, error: null };
+}
+
+export async function getProspectsMembership(prospectIds: string[]): Promise<{
+  campaigns: Record<string, string[]>;
+  lists: Record<string, string[]>;
+}> {
+  const supabase = await createSupabaseServerClient();
+
+  const { data: campaignData } = await supabase
+    .from("prospects")
+    .select("id, campaign_id")
+    .in("id", prospectIds);
+
+  const campaigns: Record<string, string[]> = {};
+  (campaignData || []).forEach((p) => {
+    if (p.campaign_id) {
+      if (!campaigns[p.campaign_id]) campaigns[p.campaign_id] = [];
+      campaigns[p.campaign_id].push(p.id);
+    }
+  });
+
+  const { data: listData } = await supabase
+    .from("prospect_list_members")
+    .select("prospect_id, list_id")
+    .in("prospect_id", prospectIds);
+
+  const lists: Record<string, string[]> = {};
+  (listData || []).forEach((m) => {
+    if (!lists[m.list_id]) lists[m.list_id] = [];
+    lists[m.list_id].push(m.prospect_id);
+  });
+
+  return { campaigns, lists };
+}
+
+// ---------------------------------------------------------------------------
+// REMOVE: Remove prospects from a list
+// ---------------------------------------------------------------------------
+export async function removeFromList(
+  prospectIds: string[],
+  listId: string,
+): Promise<{ success: boolean; error?: string }> {
+  if (!prospectIds.length)
+    return { success: false, error: "Aucun prospect sélectionné" };
+
+  const supabase = await createSupabaseServerClient();
+
+  const { error } = await supabase
+    .from("prospect_list_members")
+    .delete()
+    .in("prospect_id", prospectIds)
+    .eq("list_id", listId);
+
+  if (error) {
+    console.error("Remove prospects from list error:", error);
+    return { success: false, error: "Erreur lors du retrait de la liste" };
+  }
+
+  revalidatePath("/flows/prospecting");
+  return { success: true };
+}
+
+// ---------------------------------------------------------------------------
+// REMOVE: Remove prospects from campaign
+// ---------------------------------------------------------------------------
+export async function removeFromCampaign(
+  prospectIds: string[],
+): Promise<{ success: boolean; error?: string }> {
+  if (!prospectIds.length)
+    return { success: false, error: "Aucun prospect sélectionné" };
+
+  const user = await getUserWithProfile();
+  if (!user || !user.profile?.client_id)
+    return { success: false, error: "Non authentifié" };
+
+  const supabase = await createSupabaseServerClient();
+  const clientId = user.profile.client_id;
+
+  const { data: prospects } = await supabase
+    .from("prospects")
+    .select("id, campaign_id")
+    .in("id", prospectIds)
+    .eq("client_id", clientId);
+
+  for (const prospect of prospects || []) {
+    await cancelPendingSequenceActions(
+      supabase,
+      clientId,
+      prospect.id,
+      prospect.campaign_id,
+    );
+  }
+
+  const { error } = await supabase
+    .from("prospects")
+    .update({
+      campaign_id: null,
+      status: "rejected_by_user",
+      updated_at: new Date().toISOString(),
+    })
+    .in("id", prospectIds)
+    .eq("client_id", clientId);
+
+  if (error) {
+    console.error("Remove prospects from campaign error:", error);
+    return { success: false, error: "Erreur lors du retrait de la campagne" };
   }
 
   revalidatePath("/flows/prospecting");

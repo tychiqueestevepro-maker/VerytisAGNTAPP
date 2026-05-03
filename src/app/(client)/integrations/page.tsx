@@ -14,7 +14,7 @@ export default async function IntegrationsPage() {
   let clientName = "";
 
   if (clientId) {
-    const [integrationRes, clientRes] = await Promise.all([
+    const [integrationRes, cloudSessionRes, clientRes] = await Promise.all([
       supabase
         .from("integrations")
         .select("status")
@@ -22,13 +22,21 @@ export default async function IntegrationsPage() {
         .eq("integration_type", "chrome_extension")
         .maybeSingle(),
       supabase
+        .from("linkedin_cloud_sessions")
+        .select("status")
+        .eq("client_id", clientId)
+        .maybeSingle(),
+      supabase
         .from("clients")
         .select("display_name")
         .eq("id", clientId)
         .maybeSingle()
     ]);
-    
-    if (integrationRes.data && integrationRes.data.status === "connected") {
+
+    if (
+      integrationRes.data?.status === "connected" &&
+      cloudSessionRes.data?.status === "active"
+    ) {
       isConnected = true;
     }
     clientName = clientRes.data?.display_name || "";
@@ -58,7 +66,7 @@ export default async function IntegrationsPage() {
                 <p className="text-sm font-medium text-white/80">Installer l&apos;extension</p>
               </div>
               <p className="text-xs text-white/40 ml-7">
-                Nécessaire pour extraire les profils et automatiser vos actions LinkedIn.
+                Nécessaire pour connecter LinkedIn, importer les profils et activer le runner cloud.
               </p>
               <a
                 href="https://chrome.google.com/webstore/detail/verytis"
@@ -80,7 +88,7 @@ export default async function IntegrationsPage() {
                 <p className="text-sm font-medium text-white/80">Lier votre compte</p>
               </div>
               <p className="text-xs text-white/40 ml-7">
-                Synchronisez votre identité LinkedIn avec votre tableau de bord Verytis.
+                Connecte l&apos;extension et autorise le runner cloud à exécuter les séquences.
               </p>
 
               {clientId && (
