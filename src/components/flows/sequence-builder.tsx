@@ -94,6 +94,23 @@ export const CONDITIONS = [
   "SI doublon détecté",
 ];
 
+const STEP_DESCRIPTIONS: Record<string, string> = {
+  "Voir profil": "Visite du profil des prospects pour signaler votre intérêt.",
+  "Ajouter sans message":
+    "Envoi d'une invitation LinkedIn sans note d'accompagnement.",
+  "Ajouter avec message":
+    "Envoi d'une invitation personnalisée avec un message d'introduction.",
+  "Envoyer message":
+    "Envoi d'un message direct aux prospects avec qui vous êtes déjà en relation.",
+  "Relance message":
+    "Envoi d'un message de suivi automatique si aucune réponse n'est reçue.",
+  "Créer action extension":
+    "Action manuelle à effectuer via l'extension navigateur.",
+  condition:
+    "Vérification d'une condition spécifique pour orienter la suite du flux.",
+  wait: "Attente programmée avant de passer à l'étape suivante.",
+};
+
 export const VARIABLES = [
   "{{first_name}}",
   "{{last_name}}",
@@ -206,7 +223,6 @@ export function SequenceBuilderModal({
 
   const [editingStepId, setEditingStepId] = useState<string | null>(null);
   const [selectedProspect, setSelectedProspect] = useState<any>(null);
-  const [isGenerating, setIsGenerating] = useState(false);
 
   // Track individual prospect overrides
   // Map: prospectId -> stepId -> personalizedMessage
@@ -221,7 +237,15 @@ export function SequenceBuilderModal({
         if (Array.isArray(seq)) {
           const map: Record<string, string> = {};
           seq.forEach((s: any) => {
-            if (s.step_id) map[s.step_id] = s.message;
+            const message = s.personalized_message || s.message;
+            if (s.step_id && message) map[s.step_id] = message;
+          });
+          initial[p.id] = map;
+        } else if (Array.isArray(seq.steps)) {
+          const map: Record<string, string> = {};
+          seq.steps.forEach((s: any) => {
+            const message = s.personalized_message || s.message;
+            if (s.step_id && message) map[s.step_id] = message;
           });
           initial[p.id] = map;
         }
@@ -263,6 +287,13 @@ export function SequenceBuilderModal({
       .replace(/{{company}}/g, prospect.company_name || "")
       .replace(/{{role}}/g, prospect.role || "")
       .replace(/{{location}}/g, prospect.location || "");
+  };
+
+  const getStepDescription = (node: StepNode) => {
+    if (node.type === "wait") {
+      return `Attente de ${node.config.days || 1} jour(s) après l'étape précédente.`;
+    }
+    return STEP_DESCRIPTIONS[node.name] || STEP_DESCRIPTIONS[node.type] || "";
   };
 
   // Flatten tree to find step
@@ -408,22 +439,6 @@ export function SequenceBuilderModal({
     onClose();
   };
 
-  const handleAiGenerate = async () => {
-    if (!campaignId) return;
-    setIsGenerating(true);
-    const res = await generateAndSaveSequence(campaignId);
-    if (res.success) {
-      // Reload or update local state? For now, close and let parent re-fetch if needed,
-      // but actually we want to see the result.
-      // Easiest is to close and let the user re-open if we don't have a way to refresh steps easily here.
-      // But let's try to just alert and close.
-      window.location.reload();
-    } else {
-      alert(res.error || "Erreur lors de la génération");
-    }
-    setIsGenerating(false);
-  };
-
   const computeStepIndices = (
     nodes: StepNode[],
     startNum = 1,
@@ -472,153 +487,113 @@ export function SequenceBuilderModal({
 
   return (
     <div className="fixed inset-0 z-50 flex flex-col bg-black overflow-hidden font-sans">
-      <TopLine />
       <div className="flex flex-1 overflow-hidden relative">
-        {/* Sidebar for Action Addition / Sequence Overview */}
-        <div className="w-80 bg-[#050505] border-r border-white/10 flex flex-col shrink-0 relative z-10">
-          <div className="p-8 border-b border-white/5 flex items-center justify-between">
-            <SectionHeading>Actions</SectionHeading>
-            <button
-              onClick={onClose}
-              className="p-2 text-white/20 hover:text-white transition-colors hover:bg-white/5 rounded-lg"
-            >
-              <X className="size-4" />
-            </button>
-          </div>
-
-          <div className="flex-1 overflow-y-auto p-4 space-y-6">
-            <div className="space-y-3">
-              <h3 className="text-xs font-bold text-white/40 uppercase tracking-widest">
-                LinkedIn
-              </h3>
-              {ACTIONS.filter((a) => a.channel === CHANNELS.LINKEDIN).map(
-                (a) => (
-                  <DraggableAction key={a.name} action={a} />
-                ),
-              )}
-            </div>
-
-            <div className="space-y-3">
-              <h3 className="text-xs font-bold text-white/40 uppercase tracking-widest">
-                Général & Conditions
-              </h3>
-              <DraggableAction
-                action={{ type: "condition", name: "Condition SI/SINON" }}
-              />
-              {ACTIONS.filter((a) => a.channel === CHANNELS.GENERAL).map(
-                (a) => (
-                  <DraggableAction key={a.name} action={a} />
-                ),
-              )}
-            </div>
-          </div>
-
-          <div className="p-4 border-t border-white/10 bg-[#0a0a0a] space-y-2">
-            {campaignId && (
-              <Button
-                onClick={handleAiGenerate}
-                disabled={isGenerating}
-                className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold gap-2 border-none shadow-[0_0_15px_rgba(16,185,129,0.3)]"
-              >
-                {isGenerating ? (
-                  <Loader2 className="size-4 animate-spin" />
-                ) : (
-                  <Zap className="size-4" />
-                )}
-                Générer avec l'IA
-              </Button>
-            )}
-            <Button
-              onClick={handleSave}
-              className="w-full bg-white text-black hover:bg-white/90 font-bold gap-2"
-            >
-              <Save className="size-4" /> Enregistrer la séquence
-            </Button>
-          </div>
-        </div>
-
         {/* Canvas Area */}
         <div className="flex-1 overflow-auto relative flex flex-col">
           {/* Context Switcher Header */}
           <div className="h-16 border-b border-white/5 bg-black/40 backdrop-blur-md flex items-center justify-between px-6 shrink-0 z-20">
-            <div className="flex items-center gap-3 p-1.5 bg-white/[0.03] border border-white/10 rounded-2xl shadow-inner">
-              <button
-                onClick={() => setSelectedProspect(null)}
-                className={`px-5 py-2 rounded-xl text-xs font-bold transition-all duration-300 ${
-                  !selectedProspect
-                    ? "bg-white text-black shadow-[0_10px_20px_rgba(255,255,255,0.1)] scale-105"
-                    : "text-white/30 hover:text-white hover:bg-white/5"
-                }`}
-              >
-                Structure Globale
-              </button>
-              <div className="w-px h-5 bg-white/10 mx-1" />
-              <div className="relative group">
+            <div className="flex items-center gap-6">
+              <div className="flex items-center gap-3 p-1.5 bg-white/[0.03] border border-white/10 rounded-2xl shadow-inner">
                 <button
-                  className={`px-5 py-2 rounded-xl text-xs font-bold transition-all duration-300 flex items-center gap-3 ${
-                    selectedProspect
-                      ? "bg-blue-600 text-white shadow-[0_10px_30px_rgba(37,99,235,0.3)] scale-105"
+                  onClick={() => setSelectedProspect(null)}
+                  className={`px-5 py-2 rounded-xl text-xs font-bold transition-all duration-300 ${
+                    !selectedProspect
+                      ? "bg-white text-black shadow-[0_10px_20px_rgba(255,255,255,0.1)] scale-105"
                       : "text-white/30 hover:text-white hover:bg-white/5"
                   }`}
                 >
-                  <Users className="size-3.5" />
-                  {selectedProspect
-                    ? selectedProspect.decision_maker
-                    : "Personnalisation Prospect"}
-                  <ChevronDown className="size-3.5 opacity-40 group-hover:opacity-100 transition-opacity" />
+                  Structure Globale
                 </button>
+                <div className="w-px h-5 bg-white/10 mx-1" />
+                <div className="relative group">
+                  <button
+                    className={`px-5 py-2 rounded-xl text-xs font-bold transition-all duration-300 flex items-center gap-3 ${
+                      selectedProspect
+                        ? "bg-blue-600 text-white shadow-[0_10px_30px_rgba(37,99,235,0.3)] scale-105"
+                        : "text-white/30 hover:text-white hover:bg-white/5"
+                    }`}
+                  >
+                    <Users className="size-3.5" />
+                    {selectedProspect
+                      ? selectedProspect.decision_maker
+                      : "Personnalisation Prospect"}
+                    <ChevronDown className="size-3.5 opacity-40 group-hover:opacity-100 transition-opacity" />
+                  </button>
 
-                {/* Dropdown for prospects */}
-                <div className="absolute top-full left-0 mt-3 w-72 bg-[#0A0A0A] border border-white/10 rounded-2xl shadow-[0_30px_60px_rgba(0,0,0,0.8)] opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-300 z-50 overflow-hidden translate-y-2 group-hover:translate-y-0">
-                  <div className="p-4 border-b border-white/5 bg-white/[0.02]">
-                    <p className="text-[10px] font-bold text-white/30 uppercase tracking-[0.2em]">
-                      Sélectionner un prospect
-                    </p>
+                  {/* Dropdown for prospects */}
+                  <div className="absolute top-full left-0 mt-3 w-72 bg-[#0A0A0A] border border-white/10 rounded-2xl shadow-[0_30px_60px_rgba(0,0,0,0.8)] opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-300 z-50 overflow-hidden translate-y-2 group-hover:translate-y-0">
+                    <div className="p-4 border-b border-white/5 bg-white/[0.02]">
+                      <p className="text-[10px] font-bold text-white/30 uppercase tracking-[0.2em]">
+                        Sélectionner un prospect
+                      </p>
+                    </div>
+                    <div className="max-h-[400px] overflow-y-auto p-2 scrollbar-hide">
+                      {prospects.map((p) => (
+                        <button
+                          key={p.id}
+                          onClick={() => setSelectedProspect(p)}
+                          className={`w-full flex items-center gap-4 p-3 rounded-xl transition-all duration-200 ${
+                            selectedProspect?.id === p.id
+                              ? "bg-blue-500/10 text-white ring-1 ring-blue-500/20"
+                              : "text-white/50 hover:bg-white/5 hover:text-white"
+                          }`}
+                        >
+                          <div className="size-10 rounded-lg bg-white/5 overflow-hidden border border-white/5 shadow-lg">
+                            {p.photo_url ? (
+                              <img
+                                src={p.photo_url}
+                                className="w-full h-full object-cover"
+                              />
+                            ) : (
+                              <Users className="size-4 m-3 text-white/20" />
+                            )}
+                          </div>
+                          <div className="text-left flex-1 min-w-0">
+                            <p className="text-[13px] font-bold truncate tracking-tight">
+                              {p.decision_maker}
+                            </p>
+                            <p className="text-[10px] text-white/30 font-medium truncate mt-0.5">
+                              {p.company_name}
+                            </p>
+                          </div>
+                        </button>
+                      ))}
+                    </div>
                   </div>
-                  <div className="max-h-[400px] overflow-y-auto p-2 scrollbar-hide">
-                    {prospects.map((p) => (
-                      <button
-                        key={p.id}
-                        onClick={() => setSelectedProspect(p)}
-                        className={`w-full flex items-center gap-4 p-3 rounded-xl transition-all duration-200 ${
-                          selectedProspect?.id === p.id
-                            ? "bg-blue-500/10 text-white ring-1 ring-blue-500/20"
-                            : "text-white/50 hover:bg-white/5 hover:text-white"
-                        }`}
-                      >
-                        <div className="size-10 rounded-lg bg-white/5 overflow-hidden border border-white/5 shadow-lg">
-                          {p.photo_url ? (
-                            <img
-                              src={p.photo_url}
-                              className="w-full h-full object-cover"
-                            />
-                          ) : (
-                            <Users className="size-4 m-3 text-white/20" />
-                          )}
-                        </div>
-                        <div className="text-left flex-1 min-w-0">
-                          <p className="text-[13px] font-bold truncate tracking-tight">
-                            {p.decision_maker}
-                          </p>
-                          <p className="text-[10px] text-white/30 font-medium truncate mt-0.5">
-                            {p.company_name}
-                          </p>
-                        </div>
-                      </button>
-                    ))}
-                  </div>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-4">
+                <div className="flex items-center gap-2 text-[10px] font-bold text-white/40 uppercase tracking-widest">
+                  <div
+                    className={`size-1.5 rounded-full ${
+                      selectedProspect
+                        ? "bg-blue-500 shadow-[0_0_8px_rgba(59,130,246,0.5)]"
+                        : "bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]"
+                    }`}
+                  />
+                  Mode : {selectedProspect ? "Aperçu Prospect" : "Édition Campagne"}
                 </div>
               </div>
             </div>
 
             <div className="flex items-center gap-4">
-              <div className="flex items-center gap-2 text-[10px] font-bold text-white/40 uppercase tracking-widest">
-                <div
-                  className={`size-1.5 rounded-full ${selectedProspect ? "bg-blue-500 shadow-[0_0_8px_rgba(59,130,246,0.5)]" : "bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]"}`}
-                />
-                Mode :{" "}
-                {selectedProspect ? "Aperçu Prospect" : "Édition Campagne"}
+              <div className="flex items-center gap-2 pr-4 border-r border-white/10">
+                <Button
+                  onClick={handleSave}
+                  size="sm"
+                  className="bg-white text-black hover:bg-white/90 text-xs font-bold gap-2"
+                >
+                  <Save className="size-3.5" /> Enregistrer
+                </Button>
               </div>
+
+              <button
+                onClick={onClose}
+                className="p-2 text-white/20 hover:text-white transition-colors hover:bg-white/5 rounded-xl border border-white/5"
+              >
+                <X className="size-5" />
+              </button>
             </div>
           </div>
 
@@ -686,7 +661,14 @@ export function SequenceBuilderModal({
                       </div>
                     );
                   })()}
-                  <h3 className="font-bold text-white">Éditer l'étape</h3>
+                  <div className="flex flex-col">
+                    <h3 className="font-bold text-white leading-tight">
+                      {editingStep.name}
+                    </h3>
+                    <p className="text-[10px] text-white/30 uppercase tracking-[0.15em] font-black mt-0.5">
+                      {editingStep.type === "condition" ? "Condition" : "Action"}
+                    </p>
+                  </div>
                 </div>
                 <button
                   onClick={() => setEditingStepId(null)}
@@ -694,6 +676,12 @@ export function SequenceBuilderModal({
                 >
                   <X className="size-4" />
                 </button>
+              </div>
+
+              <div className="px-6 pt-6">
+                <p className="text-xs text-white/50 leading-relaxed italic">
+                  {getStepDescription(editingStep)}
+                </p>
               </div>
 
               <div className="flex-1 overflow-y-auto p-6 space-y-6">
@@ -953,33 +941,6 @@ export function SequenceBuilderModal({
 // Sub-components
 // ----------------------------------------------------------------------
 
-function DraggableAction({ action }: { action: any }) {
-  // We use HTML5 drag and drop or just simple click to add (for simplicity in this implementation)
-  const Icon = getIconForType(action.type, action.channel);
-  const color = getColorForType(action.type, action.channel);
-
-  const handleDragStart = (e: React.DragEvent) => {
-    e.dataTransfer.setData("application/json", JSON.stringify(action));
-  };
-
-  return (
-    <div
-      draggable
-      onDragStart={handleDragStart}
-      className="flex items-center gap-3 p-3 rounded-xl border border-white/5 bg-white/[0.02] hover:bg-white/5 hover:border-white/10 cursor-grab active:cursor-grabbing transition-colors"
-    >
-      <div className={`p-1.5 rounded-lg border ${color}`}>
-        <Icon className="size-4" />
-      </div>
-      <div className="flex-1">
-        <p className="text-sm font-medium text-white">{action.name}</p>
-      </div>
-      <div className="p-1 rounded bg-white/5 text-white/40">
-        <Plus className="size-3" />
-      </div>
-    </div>
-  );
-}
 
 function SequenceTree({
   nodes,
@@ -992,7 +953,7 @@ function SequenceTree({
   previousStep,
 }: {
   nodes: StepNode[];
-  stepIndices: Record<string, number>;
+  stepIndices: Record<string, string>;
   onEdit: (id: string) => void;
   onAdd: (parentId: string, step: StepNode, branch?: "yes" | "no") => void;
   selectedProspect?: any;
@@ -1103,7 +1064,7 @@ function NodeCard({
   formatConditionLabel,
 }: {
   node: StepNode;
-  stepNumber?: number;
+  stepNumber?: string;
   onEdit: (id: string) => void;
   selectedProspect?: any;
   replaceVariables?: (text: string, prospect: any, stepId?: string) => string;
@@ -1247,24 +1208,33 @@ function AddNodeButton({
           <div className="px-3 py-1 text-[10px] font-bold text-emerald-400 uppercase tracking-widest bg-emerald-500/5">
             Suggestions
           </div>
-          {suggestions.map((a) => (
-            <button
-              key={a.name}
-              onClick={() => {
-                onClick({
-                  id: generateId(),
-                  type: a.type,
-                  name: a.name,
-                  channel: a.channel,
-                  config: {},
-                });
-                setIsOpen(false);
-              }}
-              className="w-full text-left px-4 py-2 text-sm text-white/90 hover:text-white hover:bg-white/10 flex items-center gap-2"
-            >
-              {a.name}
-            </button>
-          ))}
+          {suggestions.map((a) => {
+            const Icon = getIconForType(a.type, a.channel);
+            const color = getColorForType(a.type, a.channel);
+            return (
+              <button
+                key={a.name}
+                onClick={() => {
+                  onClick({
+                    id: generateId(),
+                    type: a.type,
+                    name: a.name,
+                    channel: a.channel,
+                    config: {},
+                  });
+                  setIsOpen(false);
+                }}
+                className="w-full text-left px-4 py-2 text-sm text-white/90 hover:text-white hover:bg-white/10 flex items-center gap-3 group transition-colors"
+              >
+                <div
+                  className={`p-1.5 rounded-lg border ${color} group-hover:scale-110 transition-transform`}
+                >
+                  <Icon className="size-3.5" />
+                </div>
+                {a.name}
+              </button>
+            );
+          })}
           <div className="border-t border-white/10 my-1" />
           <button
             onClick={() => {
@@ -1277,32 +1247,44 @@ function AddNodeButton({
               });
               setIsOpen(false);
             }}
-            className="w-full text-left px-4 py-2 text-sm text-purple-400 hover:bg-purple-500/10 flex items-center gap-2 font-medium"
+            className="w-full text-left px-4 py-2 text-sm text-purple-400 hover:bg-purple-500/10 flex items-center gap-3 font-medium group transition-colors"
           >
+            <div className="p-1.5 rounded-lg border border-purple-500/20 bg-purple-500/10 group-hover:scale-110 transition-transform">
+              <GitBranch className="size-3.5" />
+            </div>
             Condition SI/SINON
           </button>
           <div className="border-t border-white/10 my-1" />
           <div className="px-3 py-1 text-[10px] font-bold text-white/40 uppercase tracking-widest bg-white/5">
             Autres actions
           </div>
-          {otherActions.map((a) => (
-            <button
-              key={a.name}
-              onClick={() => {
-                onClick({
-                  id: generateId(),
-                  type: a.type,
-                  name: a.name,
-                  channel: a.channel,
-                  config: {},
-                });
-                setIsOpen(false);
-              }}
-              className="w-full text-left px-4 py-2 text-sm text-white/50 hover:text-white hover:bg-white/5 flex items-center gap-2"
-            >
-              {a.name}
-            </button>
-          ))}
+          {otherActions.map((a) => {
+            const Icon = getIconForType(a.type, a.channel);
+            const color = getColorForType(a.type, a.channel);
+            return (
+              <button
+                key={a.name}
+                onClick={() => {
+                  onClick({
+                    id: generateId(),
+                    type: a.type,
+                    name: a.name,
+                    channel: a.channel,
+                    config: {},
+                  });
+                  setIsOpen(false);
+                }}
+                className="w-full text-left px-4 py-2 text-sm text-white/50 hover:text-white hover:bg-white/5 flex items-center gap-3 group transition-colors"
+              >
+                <div
+                  className={`p-1.5 rounded-lg border ${color} opacity-60 group-hover:opacity-100 group-hover:scale-110 transition-all`}
+                >
+                  <Icon className="size-3.5" />
+                </div>
+                {a.name}
+              </button>
+            );
+          })}
         </div>
       )}
     </div>

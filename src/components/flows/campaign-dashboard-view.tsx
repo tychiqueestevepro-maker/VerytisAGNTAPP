@@ -134,6 +134,15 @@ interface ActivityLog {
   count?: number;
 }
 
+interface ExtensionOverview {
+  status: string;
+  last_sync_at: string | null;
+  is_online: boolean;
+  runner_type?: "cloud" | "extension";
+  cloud_session_status?: string | null;
+  action_stats: Record<string, number>;
+}
+
 // --- Icons ---
 const LinkedinIcon = (props: any) => (
   <svg
@@ -918,9 +927,7 @@ function SettingsModal({
   campaign: Campaign;
 }) {
   const router = useRouter();
-  const [activeTab, setActiveTab] = useState<
-    "config" | "prospection" | "injection"
-  >("prospection");
+  const [activeTab, setActiveTab] = useState<"config" | "contact">("contact");
   const [isSaving, setIsSaving] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
 
@@ -930,6 +937,9 @@ function SettingsModal({
   const [localSearchTime, setLocalSearchTime] = useState(
     campaign.config?.prospection?.search_time || "09:00",
   );
+  const [localTimezone, setLocalTimezone] = useState(
+    campaign.config?.prospection?.timezone || "Europe/Paris",
+  );
 
   const handleSave = async () => {
     setIsSaving(true);
@@ -938,6 +948,7 @@ function SettingsModal({
       prospection: {
         prospects_per_day: localProspectsPerDay,
         search_time: localSearchTime,
+        timezone: localTimezone,
       },
     });
 
@@ -1002,8 +1013,7 @@ function SettingsModal({
           <div className="w-64 border-r border-white/10 bg-[#070707] p-4 flex flex-col gap-2 shrink-0">
             {[
               { id: "config", label: "Configuration", icon: Edit2 },
-              { id: "prospection", label: "Prospection", icon: Search },
-              { id: "injection", label: "Injection", icon: Zap },
+              { id: "contact", label: "Contact", icon: Zap },
             ].map((tab) => (
               <button
                 key={tab.id}
@@ -1033,90 +1043,62 @@ function SettingsModal({
                   <section className="space-y-6">
                     <h3 className="text-xs font-bold text-white/40 uppercase tracking-[0.2em] flex items-center gap-2">
                       <span className="size-1.5 rounded-full bg-blue-400" />{" "}
-                      Identité & Objectif
+                      Configuration & Cible
                     </h3>
                     <div className="grid gap-6 p-6 rounded-2xl bg-white/[0.02] border border-white/5">
                       <div className="space-y-2">
                         <label className="text-xs text-white/30 uppercase tracking-wider font-medium">
-                          Nom de la campagne
+                          Mission & Objectif
                         </label>
-                        <p className="text-sm text-white font-medium">
-                          {campaignName}
+                        <p className="text-sm text-white/70 leading-relaxed italic">
+                          {campaign.config?.company_purpose ||
+                            "Génération de rendez-vous qualifiés et développement du réseau professionnel."}
                         </p>
                       </div>
+
+                      <div className="grid grid-cols-2 gap-6">
+                        <div className="space-y-2">
+                          <label className="text-xs text-white/30 uppercase tracking-wider font-medium">
+                            Secteurs & Taille
+                          </label>
+                          <div className="flex flex-wrap gap-2">
+                            {(campaign.config?.target_icp?.sectors || ["N/A"]).map(
+                              (s: string) => (
+                                <span
+                                  key={s}
+                                  className="px-2.5 py-1 rounded-md bg-emerald-500/10 border border-emerald-500/20 text-[10px] text-emerald-400 font-medium"
+                                >
+                                  {s}
+                                </span>
+                              ),
+                            )}
+                          </div>
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-xs text-white/30 uppercase tracking-wider font-medium">
+                            Zone Géographique
+                          </label>
+                          <div className="flex flex-wrap gap-2">
+                            {(campaign.config?.target_icp?.locations || ["N/A"]).map(
+                              (l: string) => (
+                                <span
+                                  key={l}
+                                  className="px-2.5 py-1 rounded-md bg-blue-500/10 border border-blue-500/20 text-[10px] text-blue-400 font-medium"
+                                >
+                                  {l}
+                                </span>
+                              ),
+                            )}
+                          </div>
+                        </div>
+                      </div>
+
                       <div className="space-y-2">
-                        <label className="text-xs text-white/30 uppercase tracking-wider font-medium">
-                          Objectif principal
-                        </label>
-                        <p className="text-sm text-white/70 leading-relaxed">
-                          Génération de rendez-vous qualifiés pour l'offre
-                          d'Agents IA autonomes.
-                        </p>
-                      </div>
-                    </div>
-                  </section>
-                </motion.div>
-              )}
-
-              {activeTab === "prospection" && (
-                <motion.div
-                  key="prospection"
-                  initial={{ opacity: 0, y: 10 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -10 }}
-                  className="space-y-12"
-                >
-                  <section className="space-y-8">
-                    <h3 className="text-xs font-bold text-white/40 uppercase tracking-[0.2em] flex items-center gap-2">
-                      <span className="size-1.5 rounded-full bg-blue-400" /> 🎯
-                      Prospection & Cible
-                    </h3>
-
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                      <div className="p-6 rounded-2xl bg-white/[0.02] border border-white/5 space-y-4">
-                        <label className="text-xs text-white/30 uppercase tracking-wider font-medium">
-                          Secteurs & Taille
-                        </label>
-                        <div className="flex flex-wrap gap-2">
-                          {(
-                            campaign.config?.target_icp?.sectors || [
-                              "Non défini",
-                            ]
-                          ).map((s: string) => (
-                            <span
-                              key={s}
-                              className="px-2.5 py-1 rounded-md bg-emerald-500/10 border border-emerald-500/20 text-[10px] text-emerald-400 font-medium"
-                            >
-                              {s}
-                            </span>
-                          ))}
-                        </div>
-                      </div>
-                      <div className="p-6 rounded-2xl bg-white/[0.02] border border-white/5 space-y-4">
-                        <label className="text-xs text-white/30 uppercase tracking-wider font-medium">
-                          Géographie
-                        </label>
-                        <div className="flex flex-wrap gap-2">
-                          {(
-                            campaign.config?.target_icp?.locations || [
-                              "Non défini",
-                            ]
-                          ).map((t: string) => (
-                            <span
-                              key={t}
-                              className="px-3 py-1.5 rounded-lg bg-white/5 border border-white/10 text-xs text-white/70"
-                            >
-                              {t}
-                            </span>
-                          ))}
-                        </div>
-                      </div>
-                      <div className="p-6 rounded-2xl bg-white/[0.02] border border-white/5 space-y-4">
                         <label className="text-xs text-white/30 uppercase tracking-wider font-medium">
                           Décideurs ciblés
                         </label>
                         <div className="flex flex-wrap gap-2">
-                          {(campaign.config?.personas || ["Non défini"]).map(
+                          {(campaign.config?.personas || ["N/A"]).map(
                             (p: string) => (
                               <span
                                 key={p}
@@ -1128,7 +1110,8 @@ function SettingsModal({
                           )}
                         </div>
                       </div>
-                      <div className="p-6 rounded-2xl bg-white/[0.02] border border-white/5 space-y-4">
+
+                      <div className="space-y-2">
                         <label className="text-xs text-white/30 uppercase tracking-wider font-medium">
                           IA & Ton
                         </label>
@@ -1137,163 +1120,129 @@ function SettingsModal({
                         </p>
                       </div>
                     </div>
-
-                    <div className="pt-8 border-t border-white/5 space-y-8">
-                      <div className="flex items-center justify-between p-4 rounded-xl bg-blue-500/5 border border-blue-500/20">
-                        <div className="space-y-1">
-                          <p className="text-sm font-semibold text-white">
-                            Mode Automatique
-                          </p>
-                          <p className="text-xs text-white/40">
-                            L'agent prospecte quotidiennement selon l'heure
-                            définie.
-                          </p>
-                        </div>
-                        <div
-                          className={`w-12 h-6 rounded-full border relative cursor-pointer transition-colors ${campaign.config?.prospection?.mode === "auto" ? "bg-blue-500/20 border-blue-500/40" : "bg-white/5 border-white/10"}`}
-                        >
-                          <div
-                            className={`absolute top-1 size-4 rounded-full shadow-[0_0_8px_rgba(59,130,246,0.5)] transition-all ${campaign.config?.prospection?.mode === "auto" ? "right-1 bg-blue-500" : "left-1 bg-white/20"}`}
-                          />
-                        </div>
-                      </div>
-
-                      <div className="grid grid-cols-2 gap-8">
-                        <div className="space-y-4">
-                          <p className="text-xs text-white/30 uppercase tracking-wider font-medium">
-                            Prospects par jour :
-                          </p>
-                          <input
-                            type="number"
-                            value={localProspectsPerDay}
-                            onChange={(e) =>
-                              setLocalProspectsPerDay(parseInt(e.target.value))
-                            }
-                            className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-blue-500/50"
-                          />
-                        </div>
-                        <div className="space-y-4">
-                          <p className="text-xs text-white/30 uppercase tracking-wider font-medium">
-                            Heure de recherche :
-                          </p>
-                          <input
-                            type="time"
-                            value={localSearchTime}
-                            onChange={(e) => setLocalSearchTime(e.target.value)}
-                            className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-blue-500/50"
-                          />
-                        </div>
-                      </div>
-                    </div>
                   </section>
                 </motion.div>
               )}
 
-              {activeTab === "injection" && (
+              {activeTab === "contact" && (
                 <motion.div
-                  key="injection"
+                  key="contact"
                   initial={{ opacity: 0, y: 10 }}
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0, y: -10 }}
                   className="space-y-12"
                 >
-                  <section>
-                    <h3 className="text-xs font-bold text-white/40 uppercase tracking-[0.2em] mb-8">
-                      📥 Injection
+                  <section className="space-y-8">
+                    <h3 className="text-xs font-bold text-white/40 uppercase tracking-[0.2em] flex items-center gap-2">
+                      <span className="size-1.5 rounded-full bg-blue-400" /> ⚡️
+                      Contact & Envois
                     </h3>
-                    <div className="space-y-10">
-                      <div>
-                        <p className="text-sm font-medium text-white mb-4">
-                          Que faire des prospects trouvés ?
-                        </p>
-                        <div className="space-y-3">
-                          <label
-                            className={`flex items-center gap-3 p-4 rounded-xl border cursor-pointer group transition-all ${campaign.config?.injection?.auto_add ? "border-emerald-500/20 bg-emerald-500/5" : "border-white/5 bg-white/[0.02]"}`}
-                          >
+
+                    <div className="space-y-8">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                        <div className="space-y-4">
+                          <div className="flex items-center justify-between">
+                            <label className="text-xs text-white/30 uppercase tracking-wider font-medium">
+                              Prospects contactés par jour
+                            </label>
+                            <span className="text-[10px] bg-white/5 text-white/40 px-2 py-0.5 rounded font-bold border border-white/10">
+                              CONSEIL : 20
+                            </span>
+                          </div>
+                          <div className="relative">
                             <input
-                              type="radio"
-                              name="injection"
-                              checked={campaign.config?.injection?.auto_add}
-                              readOnly
-                              className="size-4 accent-emerald-500"
+                              type="number"
+                              min={1}
+                              value={localProspectsPerDay}
+                              onChange={(e) => {
+                                setLocalProspectsPerDay(parseInt(e.target.value) || 0);
+                              }}
+                              className={cn(
+                                "w-full bg-white/5 border rounded-xl px-4 py-3 text-sm text-white focus:outline-none transition-all",
+                                localProspectsPerDay > 30
+                                  ? "border-red-500/50 bg-red-500/5"
+                                  : localProspectsPerDay > 20
+                                    ? "border-amber-500/50 bg-amber-500/5 focus:border-amber-500"
+                                    : "border-white/10 focus:border-blue-500/50"
+                              )}
                             />
-                            <div>
-                              <p className="text-sm text-white font-medium">
-                                Ajouter automatiquement à la campagne
+                            {localProspectsPerDay > 30 ? (
+                              <div className="flex items-center gap-2 mt-2 text-red-400">
+                                <AlertCircle className="size-3" />
+                                <p className="text-[10px] font-bold uppercase tracking-wider">
+                                  LIMITE CRITIQUE : Maximum 30 par jour
+                                </p>
+                              </div>
+                            ) : localProspectsPerDay > 20 ? (
+                              <div className="flex items-center gap-2 mt-2 text-amber-400">
+                                <Info className="size-3" />
+                                <p className="text-[10px] font-bold uppercase tracking-wider">
+                                  Dépassement du conseil (20/jour)
+                                </p>
+                              </div>
+                            ) : (
+                              <p className="text-[10px] text-white/20 italic mt-2">
+                                Nous conseillons un maximum de 20 contacts par jour pour la sécurité.
                               </p>
-                              <p className="text-xs text-white/40 mt-0.5">
-                                L'IA lance la séquence immédiatement après la
-                                découverte.
-                              </p>
-                            </div>
-                          </label>
-                          <label
-                            className={`flex items-center gap-3 p-4 rounded-xl border cursor-pointer group transition-all ${!campaign.config?.injection?.auto_add ? "border-emerald-500/20 bg-emerald-500/5" : "border-white/5 bg-white/[0.02]"}`}
-                          >
-                            <input
-                              type="radio"
-                              name="injection"
-                              checked={!campaign.config?.injection?.auto_add}
-                              readOnly
-                              className="size-4 accent-emerald-500"
-                            />
-                            <div>
-                              <p className="text-sm text-white/70 font-medium group-hover:text-white transition-colors">
-                                Valider avant ajout
-                              </p>
-                              <p className="text-xs text-white/40 mt-0.5">
-                                Les prospects restent en attente dans l'onglet
-                                de validation.
-                              </p>
-                            </div>
-                          </label>
+                            )}
+                          </div>
                         </div>
-                      </div>
-                      <div className="space-y-4 pt-6 border-t border-white/5">
-                        <p className="text-sm font-medium text-white">
-                          Options :
-                        </p>
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                          <label className="flex items-center gap-3 p-4 rounded-xl bg-white/[0.02] border border-white/5 opacity-50 cursor-not-allowed">
-                            <div className="flex items-center justify-center size-5 rounded border border-white/20 bg-white/5">
-                              <input
-                                type="checkbox"
-                                checked={
-                                  campaign.config?.injection?.ignore_duplicates
-                                }
-                                readOnly
-                                className="size-4 accent-blue-500"
-                              />
-                            </div>
-                            <span className="text-sm text-white/70">
-                              Ignorer les doublons
-                            </span>
+                        <div className="space-y-4">
+                          <label className="text-xs text-white/30 uppercase tracking-wider font-medium">
+                            Heures de contact
                           </label>
-                          <label
-                            className={`flex items-center gap-3 p-4 rounded-xl border cursor-pointer hover:bg-white/5 transition-colors ${campaign.config?.injection?.prioritize_linkedin ? "bg-blue-500/5 border-blue-500/20" : "bg-white/[0.02] border-white/5"}`}
+                          <div className="flex items-center gap-3">
+                            <input
+                              type="time"
+                              value={localSearchTime}
+                              onChange={(e) =>
+                                setLocalSearchTime(e.target.value)
+                              }
+                              className="flex-1 bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-blue-500/50"
+                            />
+                            <span className="text-white/20">à</span>
+                            <input
+                              type="time"
+                              value="00:00"
+                              disabled
+                              className="flex-1 bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white/40 focus:outline-none"
+                            />
+                          </div>
+                        </div>
+
+                        <div className="space-y-4">
+                          <label className="text-xs text-white/30 uppercase tracking-wider font-medium">
+                            Fuseau horaire
+                          </label>
+                          <select
+                            value={localTimezone}
+                            onChange={(e) => setLocalTimezone(e.target.value)}
+                            className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-blue-500/50"
                           >
-                            <div className="flex items-center justify-center size-5 rounded border border-white/20 bg-white/5">
-                              <input
-                                type="checkbox"
-                                checked={
-                                  campaign.config?.injection
-                                    ?.prioritize_linkedin
-                                }
-                                readOnly
-                                className="size-4 accent-blue-500"
-                              />
-                            </div>
-                            <span className="text-sm text-white/70">
-                              Prioriser les prospects avec LinkedIn
-                            </span>
-                          </label>
+                            <option value="Europe/Paris">
+                              Paris (UTC+01:00)
+                            </option>
+                            <option value="Europe/London">
+                              Londres (UTC+00:00)
+                            </option>
+                            <option value="America/New_York">
+                              New York (UTC-05:00)
+                            </option>
+                            <option value="Asia/Tokyo">
+                              Tokyo (UTC+09:00)
+                            </option>
+                            <option value="Australia/Sydney">
+                              Sydney (UTC+11:00)
+                            </option>
+                          </select>
                         </div>
                       </div>
                     </div>
                   </section>
-                </motion.div>
-              )}
-            </AnimatePresence>
+
+	                </motion.div>
+	              )}
+	            </AnimatePresence>
           </div>
         </div>
 
@@ -1321,7 +1270,7 @@ function SettingsModal({
             </Button>
             <Button
               onClick={handleSave}
-              disabled={isSaving}
+              disabled={isSaving || localProspectsPerDay > 30}
               className="bg-white text-black hover:bg-white/90 px-8 font-bold min-w-[140px]"
             >
               {isSaving ? (
@@ -1345,11 +1294,13 @@ export function CampaignDashboardView({
   prospects: initialProspects,
   activities,
   sequenceSteps,
+  extensionOverview,
 }: {
   campaign: Campaign;
   prospects: Prospect[];
   activities: ActivityLog[];
   sequenceSteps?: any[];
+  extensionOverview?: ExtensionOverview;
 }) {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -1669,6 +1620,16 @@ export function CampaignDashboardView({
   };
 
   const isPaused = campaign.status === "paused";
+  const extensionStats = extensionOverview?.action_stats || {};
+  const runnerIsCloud = extensionOverview?.runner_type === "cloud";
+  const lastExtensionSync = extensionOverview?.last_sync_at
+    ? new Date(extensionOverview.last_sync_at).toLocaleString("fr-FR", {
+        day: "2-digit",
+        month: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+      })
+    : "Jamais";
 
   return (
     <div className="flex flex-col min-h-[calc(100vh-64px)] w-full bg-black text-white font-sans overflow-y-auto">
@@ -1718,7 +1679,7 @@ export function CampaignDashboardView({
                 <Button
                   onClick={toggleStatus}
                   disabled={isStatusLoading}
-                  className={`h-9 gap-2 text-xs font-bold border transition-all ${isPaused ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20 hover:bg-emerald-500/20" : "bg-amber-500/10 text-amber-400 border-amber-500/20 hover:bg-amber-500/20"}`}
+                  className={`h-9 gap-2 text-xs font-bold border transition-all ${isPaused ? "bg-white/5 text-white/60 border-white/10 hover:bg-white/10 hover:text-white" : "bg-amber-500/10 text-amber-400 border-amber-500/20 hover:bg-amber-500/20"}`}
                 >
                   {isStatusLoading ? (
                     <Loader2 className="size-3.5 animate-spin" />
@@ -1727,7 +1688,7 @@ export function CampaignDashboardView({
                   ) : (
                     <Pause className="size-3.5" />
                   )}
-                  {isPaused ? "Relancer l'IA" : "Mettre en pause l'IA"}
+                  {isPaused ? "Relancer la campagne" : "Mettre en pause la campagne"}
                 </Button>
                 <button
                   onClick={() => toggleProspectsModal(true)}
@@ -1791,8 +1752,8 @@ export function CampaignDashboardView({
                           </div>
                         </div>
                       </div>
-                      <div className="flex items-center gap-12 shrink-0">
-                        <div className="hidden md:flex flex-col items-center">
+                      <div className="flex items-center gap-8 shrink-0">
+                        <div className="hidden md:flex flex-col items-center w-16">
                           <p className="text-[10px] text-white/20 uppercase tracking-widest mb-1.5 font-bold">
                             Step
                           </p>
@@ -1807,7 +1768,7 @@ export function CampaignDashboardView({
                             {getStepLabel(p.status)}
                           </span>
                         </div>
-                        <div className="hidden sm:flex flex-col items-center">
+                        <div className="hidden sm:flex flex-col items-center w-16">
                           <p className="text-[10px] text-white/20 uppercase tracking-widest mb-1.5 font-bold">
                             ICP
                           </p>
@@ -1933,6 +1894,74 @@ export function CampaignDashboardView({
               </div>
             </motion.section>
 
+            <motion.section {...fade} transition={{ delay: 0.12 }}>
+              <div className="flex items-center justify-between mb-8">
+                <SectionHeading>Runner LinkedIn</SectionHeading>
+                <button
+                  onClick={() => router.push("/integrations")}
+                  className="text-xs font-bold text-white/40 hover:text-white transition-colors"
+                >
+                  Gérer
+                </button>
+              </div>
+              <div className="p-5 rounded-2xl border border-white/5 bg-white/[0.015] space-y-5">
+                <div className="flex items-center justify-between gap-4">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div
+                      className={cn(
+                        "size-9 rounded-xl border flex items-center justify-center",
+                        extensionOverview?.is_online
+                          ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-400"
+                          : "bg-amber-500/10 border-amber-500/20 text-amber-400",
+                      )}
+                    >
+                      <LinkedinIcon className="size-4" />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold text-white">
+                        {runnerIsCloud
+                          ? extensionOverview?.is_online
+                            ? "Cloud actif"
+                            : "Session à connecter"
+                          : extensionOverview?.is_online
+                            ? "Extension connectée"
+                            : "Extension hors ligne"}
+                      </p>
+                      <p className="text-[10px] text-white/30 uppercase tracking-widest mt-0.5">
+                        {runnerIsCloud ? "Dernière vérif" : "Dernier signal"} : {lastExtensionSync}
+                      </p>
+                    </div>
+                  </div>
+                  <span
+                    className={cn(
+                      "size-2 rounded-full shrink-0",
+                      extensionOverview?.is_online
+                        ? "bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.45)]"
+                        : "bg-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.35)]",
+                    )}
+                  />
+                </div>
+
+                <div className="grid grid-cols-3 gap-2">
+                  {[
+                    ["Envoyés", extensionStats.sent || 0],
+                    ["Réponses", extensionStats.replies || 0],
+                    ["Erreurs", extensionStats.failed || 0],
+                  ].map(([label, value]) => (
+                    <div key={label} className="rounded-xl bg-white/[0.025] p-3">
+                      <p className="text-lg font-semibold text-white leading-none">
+                        {value}
+                      </p>
+                      <p className="mt-2 text-[9px] font-bold uppercase tracking-widest text-white/25">
+                        {label}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+
+              </div>
+            </motion.section>
+
             <motion.section {...fade} transition={{ delay: 0.14 }}>
               <div className="flex items-center justify-between mb-8">
                 <SectionHeading>Configuration</SectionHeading>
@@ -1948,7 +1977,9 @@ export function CampaignDashboardView({
                   {
                     label: "Cible",
                     value:
-                      campaign.config?.target_icp?.sectors?.[0] || "Non défini",
+                      campaign.config?.target_icp?.sectors?.length > 0
+                        ? campaign.config.target_icp.sectors.slice(0, 3).join(", ") + (campaign.config.target_icp.sectors.length > 3 ? ".." : "")
+                        : "Cible sans config",
                   },
                   { label: "Canal", value: "LinkedIn" },
                   {
@@ -2422,8 +2453,8 @@ export function CampaignDashboardView({
                                 </div>
                               </div>
                             </div>
-                            <div className="flex items-center gap-12 shrink-0">
-                              <div className="hidden lg:flex flex-col items-center">
+                            <div className="flex items-center gap-8 shrink-0">
+                              <div className="hidden lg:flex flex-col items-center w-20">
                                 <p className="text-[10px] text-white/20 uppercase tracking-widest mb-1.5 font-bold">
                                   Importé le
                                 </p>
@@ -2436,7 +2467,7 @@ export function CampaignDashboardView({
                                     : "—"}
                                 </span>
                               </div>
-                              <div className="hidden md:flex flex-col items-center">
+                              <div className="hidden md:flex flex-col items-center w-16">
                                 <p className="text-[10px] text-white/20 uppercase tracking-widest mb-1.5 font-bold">
                                   Step
                                 </p>
@@ -2451,7 +2482,7 @@ export function CampaignDashboardView({
                                   {getStepLabel(p.status)}
                                 </span>
                               </div>
-                              <div className="hidden sm:flex flex-col items-center">
+                              <div className="hidden sm:flex flex-col items-center w-16">
                                 <p className="text-[10px] text-white/20 uppercase tracking-widest mb-1.5 font-bold">
                                   ICP
                                 </p>

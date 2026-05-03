@@ -1,5 +1,5 @@
-import { createClient } from '@supabase/supabase-js';
 import { NextResponse } from 'next/server';
+import { createSupabaseServiceClient } from '@/lib/supabase/server';
 
 export async function POST(req: Request) {
   try {
@@ -9,10 +9,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
     }
 
-    const supabase = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!
-    );
+    const supabase = createSupabaseServiceClient();
 
     // 1. Find the prospect
     const { data: prospect, error: fetchErr } = await supabase
@@ -32,7 +29,6 @@ export async function POST(req: Request) {
       .from("prospects")
       .update({
         status: "replied",
-        qualification_status: "replied",
         updated_at: new Date().toISOString(),
       })
       .eq("id", prospect.id);
@@ -40,6 +36,17 @@ export async function POST(req: Request) {
     if (updateErr) {
       return NextResponse.json({ error: updateErr.message }, { status: 500 });
     }
+
+    await supabase
+      .from("extension_actions")
+      .update({
+        status: "cancelled",
+        error_message: "Prospect replied before this action ran",
+        locked_until: null,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("prospect_id", prospect.id)
+      .in("status", ["pending", "ready"]);
 
     console.log(`[API] Prospect ${prospect.decision_maker} marked as replied. Workflow stopped.`);
 

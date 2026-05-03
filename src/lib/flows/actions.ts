@@ -12,6 +12,7 @@ import { preScoreProspect } from "@/lib/prospecting/scoring";
 import { logCampaignActivity, logCampaignActivities } from "@/lib/flows/activity";
 import { generateSequenceForCampaign } from "./sequences";
 import { personalizeSequenceForProspect } from "@/lib/prospecting/personalization";
+import { enqueueExtensionActionsForQualifiedProspect } from "@/lib/extension/sequence-runner";
 
 type ProspectingCampaignConfig = {
   target_icp?: {
@@ -32,6 +33,7 @@ type ProspectingCampaignConfig = {
     mode?: string;
     prospects_per_day?: number;
     search_time?: string;
+    timezone?: string;
     sector?: string;
     location?: string;
     decision_maker?: string;
@@ -183,6 +185,7 @@ export async function updateCampaignConfig(
       mode?: "auto" | "manual";
       prospects_per_day?: number;
       search_time?: string;
+      timezone?: string;
       sector?: string;
       location?: string;
       decision_maker?: string;
@@ -706,6 +709,28 @@ async function qualifyProspectRecord(
     throw new Error("Impossible d'enregistrer la qualification");
   }
 
+  let extensionActionsCreated = 0;
+  let extensionActionsSkipped = 0;
+  if (finalQualificationStatus === "qualified") {
+    try {
+      const enqueueResult = await enqueueExtensionActionsForQualifiedProspect({
+        supabase,
+        clientId,
+        prospect: {
+          ...updated,
+          client_id: clientId,
+        },
+        campaign,
+        sequenceSteps,
+        personalizedSequence,
+      });
+      extensionActionsCreated = enqueueResult.created;
+      extensionActionsSkipped = enqueueResult.skipped;
+    } catch (error) {
+      console.error("Error enqueueing extension actions:", error);
+    }
+  }
+
   await logCampaignActivity({
     clientId,
     campaignId: updated.campaign_id,
@@ -719,6 +744,8 @@ async function qualifyProspectRecord(
       qualification_level: updated.qualification_level,
       qualification_status: updated.qualification_status,
       fit_score: updated.fit_score,
+      extension_actions_created: extensionActionsCreated,
+      extension_actions_skipped: extensionActionsSkipped,
     },
   });
 
@@ -932,10 +959,18 @@ export async function updateProspectPersonalization(
 
   const supabase = await createSupabaseServerClient();
 
+  const { data: prospect } = await supabase
+    .from("prospects")
+    .select("extra_data")
+    .eq("id", prospectId)
+    .eq("client_id", user.profile.client_id)
+    .single();
+
   const { error } = await supabase
     .from("prospects")
     .update({
       extra_data: {
+        ...(prospect?.extra_data || {}),
         personalized_sequence: personalizedSequence
       }
     })

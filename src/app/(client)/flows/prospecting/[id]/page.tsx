@@ -175,7 +175,10 @@ export default async function CampaignDetailPage({ params }: Props) {
     if (isWithinWindow && last.action_raw === act.action && groupableActions.includes(act.action)) {
       last.count = (last.count || 1) + 1;
       if (prospectName) last.groupNames.push(prospectName);
-      if (photoUrl) last.photos.push(photoUrl);
+      if (photoUrl) {
+        last.photos = last.photos || [];
+        last.photos.push(photoUrl);
+      }
       
       const name1 = last.groupNames[0].split(' ')[0];
       const name2 = last.groupNames[1] ? last.groupNames[1].split(' ')[0] : '';
@@ -256,6 +259,57 @@ export default async function CampaignDetailPage({ params }: Props) {
     company: Array.isArray(p.company) ? p.company[0] || null : p.company || null
   }));
 
+  const { data: extensionIntegration } = await supabase
+    .from("integrations")
+    .select("status, last_sync_at, extra_data")
+    .eq("client_id", user.profile.client_id)
+    .eq("integration_type", "chrome_extension")
+    .maybeSingle();
+
+  const { data: cloudSession } = await supabase
+    .from("linkedin_cloud_sessions")
+    .select("status, last_verified_at, error_message")
+    .eq("client_id", user.profile.client_id)
+    .maybeSingle();
+
+  const { data: extensionActions } = await supabase
+    .from("extension_actions")
+    .select("status, action_type")
+    .eq("client_id", user.profile.client_id)
+    .eq("campaign_id", id);
+
+  const contactActionTypes = new Set(["connect", "connect_with_message", "send_message"]);
+  const repliedCount = (prospects ?? []).filter((prospect) => prospect.status === "replied").length;
+  const actionStats = (extensionActions ?? []).reduce(
+    (acc, action) => {
+      const status = action.status || "unknown";
+
+      acc.total += 1;
+      acc[status] = (acc[status] || 0) + 1;
+
+      if (status === "completed" && contactActionTypes.has(action.action_type || "")) {
+        acc.sent += 1;
+      }
+
+      return acc;
+    },
+    { total: 0, sent: 0, replies: repliedCount } as Record<string, number>,
+  );
+
+  const integrationExtraData = (extensionIntegration?.extra_data as Record<string, unknown> | null) || {};
+  const runnerType = cloudSession || integrationExtraData.runner_type === "cloud" ? "cloud" : "extension";
+  const lastSyncAt =
+    runnerType === "cloud"
+      ? cloudSession?.last_verified_at || extensionIntegration?.last_sync_at || null
+      : extensionIntegration?.last_sync_at || null;
+  const lastSyncMs = lastSyncAt ? new Date(lastSyncAt).getTime() : 0;
+  const isRunnerOnline =
+    runnerType === "cloud"
+      ? cloudSession?.status === "active"
+      : extensionIntegration?.status === "connected" &&
+        lastSyncMs > 0 &&
+        Date.now() - lastSyncMs < 2 * 60 * 1000;
+
   return (
     <>
       <CampaignDashboardView
@@ -263,6 +317,14 @@ export default async function CampaignDetailPage({ params }: Props) {
         prospects={mappedProspects as any}
         activities={mappedActivities as any}
         sequenceSteps={sequenceSteps ?? []}
+        extensionOverview={{
+          status: extensionIntegration?.status || "pending",
+          last_sync_at: lastSyncAt,
+          is_online: isRunnerOnline,
+          runner_type: runnerType,
+          cloud_session_status: cloudSession?.status || null,
+          action_stats: actionStats,
+        }}
       />
     </>
   );
