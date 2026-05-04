@@ -204,29 +204,7 @@ export async function activateFlow(flowId: string, config: any) {
 // ---------------------------------------------------------------------------
 export async function updateCampaignConfig(
   campaignId: string,
-  config: {
-    target_icp?: {
-      sectors?: string[];
-      company_size?: string[];
-      locations?: string[];
-    };
-    personas?: string[];
-    tone?: string;
-    prospection?: {
-      mode?: "auto" | "manual";
-      prospects_per_day?: number;
-      search_time?: string;
-      timezone?: string;
-      sector?: string;
-      location?: string;
-      decision_maker?: string;
-      selected_days?: number[];
-    };
-    injection?: {
-      auto_add?: boolean;
-      ignore_duplicates?: boolean;
-      prioritize_linkedin?: boolean;
-    };
+  config: Partial<ProspectingCampaignConfig> & {
     display_name?: string;
     objective?: string;
   },
@@ -263,6 +241,7 @@ export async function updateCampaignConfig(
 
   const updatePayload: Record<string, any> = { config: merged };
   if (config.display_name) updatePayload.display_name = config.display_name;
+  if (config.objective) updatePayload.objective = config.objective;
 
   const { error: updateError } = await supabase
     .from("campaigns")

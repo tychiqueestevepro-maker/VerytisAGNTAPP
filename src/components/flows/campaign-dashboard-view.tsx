@@ -2387,9 +2387,9 @@ export function CampaignDashboardView({
                       const sectors = [
                         ...(icp?.sectors || []),
                         ...(icp?.industries || []),
-                      ].filter((s) => s && s !== "N/A");
+                      ].filter((s: string) => s && s !== "N/A");
                       const personas = (campaign.config?.personas || []).filter(
-                        (p) => p && p !== "N/A",
+                        (p: string) => p && p !== "N/A",
                       );
 
                       const sectorPart =
@@ -2406,7 +2406,7 @@ export function CampaignDashboardView({
                       }
 
                       const locations = (icp?.locations || []).filter(
-                        (l) => l && l !== "N/A",
+                        (l: string) => l && l !== "N/A",
                       );
                       if (locations.length > 0) {
                         return locations.slice(0, 2).join(", ");
