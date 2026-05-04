@@ -40,7 +40,12 @@ interface Campaign {
   status: CampaignStatus;
   created_at: string;
   config?: {
-    target_icp?: { sectors?: string[]; locations?: string[]; company_size?: string[] };
+    target_icp?: {
+      sectors?: string[];
+      industries?: string[];
+      locations?: string[];
+      company_size?: string[];
+    };
     prospection?: { prospects_per_day?: number; sector?: string; location?: string; search_time?: string };
     personas?: string[];
     tone?: string;
@@ -724,9 +729,7 @@ export function CampaignsListView({
                   <Briefcase className="size-5 text-white/70" />
                 </div>
                 <div>
-                  <h3 className="text-white font-semibold leading-tight group-hover:text-white transition-colors">
-                    {camp.display_name || camp.name || "Campagne sans nom"}
-                  </h3>
+                  <h3 className="text-white font-semibold leading-tight group-hover:text-white transition-colors">{camp.display_name}</h3>
                   <div className="flex items-center gap-1.5 mt-1">
                     <StatusDot status={camp.status} />
                     <span className="text-[10px] uppercase tracking-wider font-bold text-white/40">{STATUS_LABEL[camp.status] ?? camp.status}</span>

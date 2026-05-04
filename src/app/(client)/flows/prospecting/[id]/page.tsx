@@ -129,7 +129,7 @@ export default async function CampaignDetailPage({ params }: Props) {
   }
 
   // Filter in memory with high tolerance
-  const auditActivitiesFiltered = (rawAuditActivities ?? []).filter((act) => {
+  const auditActivitiesFiltered = (rawAuditActivities ?? []).filter((act: any) => {
     const meta = (act.metadata ?? {}) as any;
     // Check various possible keys for campaign ID in metadata
     const cid = meta.campaign_id || meta.campaignId || meta.campaign_ID;
@@ -141,8 +141,8 @@ export default async function CampaignDetailPage({ params }: Props) {
   const prospectIds = Array.from(
     new Set(
       auditActivitiesFiltered
-        .filter((act) => act.entity_type === "prospect" && act.entity_id)
-        .map((act) => act.entity_id),
+        .filter((act: any) => act.entity_type === "prospect" && act.entity_id)
+        .map((act: any) => act.entity_id),
     ),
   );
 
@@ -154,14 +154,14 @@ export default async function CampaignDetailPage({ params }: Props) {
       .in("id", prospectIds);
 
     if (prospectDetails) {
-      prospectsMap = prospectDetails.reduce(
-        (acc, p) => ({ ...acc, [p.id]: p }),
+      prospectsMap = prospectDetails.reduce<Record<string, any>>(
+        (acc: Record<string, any>, p: any) => ({ ...acc, [p.id]: p }),
         {},
       );
     }
   }
 
-  const auditActivities = auditActivitiesFiltered.map((act) => ({
+  const auditActivities = auditActivitiesFiltered.map((act: any) => ({
     ...act,
     prospect: act.entity_id ? prospectsMap[act.entity_id] : null,
   }));
@@ -170,7 +170,7 @@ export default async function CampaignDetailPage({ params }: Props) {
   const windowMs = 60 * 1000; // 60s grouping window
 
   const sortedAudit = (auditActivities ?? []).sort(
-    (a, b) =>
+    (a: any, b: any) =>
       new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
   );
 
@@ -305,7 +305,7 @@ export default async function CampaignDetailPage({ params }: Props) {
 
   const mappedActivities = groupedAudit.slice(0, 20);
 
-  const mappedProspects = (prospects ?? []).map((p) => ({
+  const mappedProspects = (prospects ?? []).map((p: any) => ({
     ...p,
     company: Array.isArray(p.company)
       ? p.company[0] || null
@@ -340,7 +340,7 @@ export default async function CampaignDetailPage({ params }: Props) {
     (prospect) => prospect.status === "replied",
   ).length;
   const actionStats = (extensionActions ?? []).reduce(
-    (acc, action) => {
+    (acc: any, action: any) => {
       const status = action.status || "unknown";
 
       acc.total += 1;
@@ -364,7 +364,7 @@ export default async function CampaignDetailPage({ params }: Props) {
 
   if (extensionActions && extensionActions.length > 0) {
     const actionsByProspect = (extensionActions as any[]).reduce(
-      (acc, action) => {
+      (acc: any, action: any) => {
         const pid = action.prospect_id;
         if (!acc[pid]) acc[pid] = [];
         acc[pid].push(action);
@@ -375,14 +375,14 @@ export default async function CampaignDetailPage({ params }: Props) {
 
     for (const pid in actionsByProspect) {
       const pActions = actionsByProspect[pid].sort(
-        (a, b) =>
+        (a: any, b: any) =>
           new Date(a.scheduled_at).getTime() -
           new Date(b.scheduled_at).getTime(),
       );
 
       // Current step is the first one that is NOT finished
       const currentAction = pActions.find(
-        (a) => !["completed", "cancelled", "failed"].includes(a.status),
+        (a: any) => !["completed", "cancelled", "failed"].includes(a.status),
       );
 
       if (currentAction) {
@@ -392,7 +392,7 @@ export default async function CampaignDetailPage({ params }: Props) {
         }
       } else {
         // If all actions are finished, and at least one was completed
-        const hasCompleted = pActions.some((a) => a.status === "completed");
+        const hasCompleted = pActions.some((a: any) => a.status === "completed");
         if (hasCompleted) {
           completedCount++;
         }
