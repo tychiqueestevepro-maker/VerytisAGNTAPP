@@ -17,7 +17,6 @@ export async function GET(request: Request) {
       .from('campaigns')
       .select('*')
       .eq('organization_id', clientId)
-      .eq('status', 'active')
       .order('created_at', { ascending: false });
 
     if (error) {

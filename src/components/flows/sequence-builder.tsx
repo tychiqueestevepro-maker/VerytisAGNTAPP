@@ -229,6 +229,8 @@ interface SequenceBuilderProps {
   onClose: () => void;
   onSave?: (steps: StepNode[]) => void;
   prospects?: any[];
+  stepCounts?: Record<string, number>;
+  completedCount?: number;
 }
 
 const recursiveMapSteps = (nodes: any[]): StepNode[] => {
@@ -253,6 +255,8 @@ export function SequenceBuilderModal({
   onClose,
   onSave,
   prospects = [],
+  stepCounts = {},
+  completedCount = 0,
 }: SequenceBuilderProps) {
   const [steps, setSteps] = useState<StepNode[]>(() => {
     if (initialSteps && initialSteps.length > 0) {
@@ -778,18 +782,25 @@ export function SequenceBuilderModal({
                 selectedProspect={selectedProspect}
                 replaceVariables={replaceVariables}
                 formatConditionLabel={formatConditionLabel}
+                stepCounts={stepCounts}
                 onEdit={handleEditStep}
                 onAdd={(parentId, step, branch) =>
                   setSteps((s) => addStep(s, parentId, step, branch))
                 }
               />
 
-              <AddNodeButton
-                previousStep={steps[steps.length - 1]}
-                onClick={(step) => setSteps((s) => addStep(s, "root", step))}
-              />
-
-              <div className="mt-8 size-4 rounded-full border-4 border-white/20 bg-[#0A0A0A]" />
+              <div className="mt-12 flex flex-col items-center">
+                <div className="w-px h-12 bg-gradient-to-b from-white/20 to-transparent" />
+                <div className="px-8 py-4 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 flex flex-col items-center gap-1 shadow-[0_0_30px_rgba(16,185,129,0.1)]">
+                  <CheckCircle2 className="size-6 text-emerald-400 mb-1" />
+                  <span className="text-[11px] font-black text-emerald-400 uppercase tracking-[0.2em]">
+                    Terminés
+                  </span>
+                  <span className="text-3xl font-bold text-white">
+                    {completedCount}
+                  </span>
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -1127,6 +1138,9 @@ function SequenceTree({
   replaceVariables,
   formatConditionLabel,
   previousStep,
+  stepCounts = {},
+  branchOwnerId,
+  branchType,
 }: {
   nodes: StepNode[];
   stepIndices: Record<string, string>;
@@ -1136,6 +1150,9 @@ function SequenceTree({
   replaceVariables?: (text: string, prospect: any, stepId?: string) => string;
   formatConditionLabel?: (label: string, prospect: any) => string;
   previousStep?: StepNode;
+  stepCounts?: Record<string, number>;
+  branchOwnerId?: string;
+  branchType?: "yes" | "no";
 }) {
   return (
     <div className="flex flex-col items-center gap-6">
@@ -1151,6 +1168,7 @@ function SequenceTree({
             selectedProspect={selectedProspect}
             replaceVariables={replaceVariables}
             formatConditionLabel={formatConditionLabel}
+            count={stepCounts[node.id] || 0}
           />
 
           {node.type === "condition" ? (
@@ -1166,67 +1184,91 @@ function SequenceTree({
                   <div className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/20 text-emerald-400 mb-6 border border-emerald-500/30">
                     OUI
                   </div>
-                  {node.config.yesBranch && node.config.yesBranch.length > 0 ? (
-                    <SequenceTree
-                      nodes={node.config.yesBranch}
-                      stepIndices={stepIndices}
-                      onEdit={onEdit}
-                      onAdd={onAdd}
-                      selectedProspect={selectedProspect}
-                      replaceVariables={replaceVariables}
-                      formatConditionLabel={formatConditionLabel}
-                      previousStep={node}
-                    />
-                  ) : (
-                    <AddNodeButton
-                      previousStep={node}
-                      onClick={(step) => onAdd(node.id, step, "yes")}
-                    />
-                  )}
+                  <SequenceTree
+                    nodes={node.config.yesBranch || []}
+                    stepIndices={stepIndices}
+                    onEdit={onEdit}
+                    onAdd={onAdd}
+                    selectedProspect={selectedProspect}
+                    replaceVariables={replaceVariables}
+                    formatConditionLabel={formatConditionLabel}
+                    previousStep={node}
+                    stepCounts={stepCounts}
+                    branchOwnerId={node.id}
+                    branchType="yes"
+                  />
                 </div>
                 <div className="flex-1 flex flex-col items-center pt-6 px-4">
                   <div className="px-2 py-0.5 rounded text-[10px] font-bold bg-red-500/20 text-red-400 mb-6 border border-red-500/30">
                     NON
                   </div>
-                  {node.config.noBranch && node.config.noBranch.length > 0 ? (
-                    <SequenceTree
-                      nodes={node.config.noBranch}
-                      stepIndices={stepIndices}
-                      onEdit={onEdit}
-                      onAdd={onAdd}
-                      selectedProspect={selectedProspect}
-                      replaceVariables={replaceVariables}
-                      formatConditionLabel={formatConditionLabel}
-                      previousStep={node}
-                    />
-                  ) : (
-                    <AddNodeButton
-                      previousStep={node}
-                      onClick={(step) => onAdd(node.id, step, "no")}
-                    />
-                  )}
+                  <SequenceTree
+                    nodes={node.config.noBranch || []}
+                    stepIndices={stepIndices}
+                    onEdit={onEdit}
+                    onAdd={onAdd}
+                    selectedProspect={selectedProspect}
+                    replaceVariables={replaceVariables}
+                    formatConditionLabel={formatConditionLabel}
+                    previousStep={node}
+                    stepCounts={stepCounts}
+                    branchOwnerId={node.id}
+                    branchType="no"
+                  />
                 </div>
               </div>
 
-              {/* Join Connector */}
-              {index < nodes.length - 1 && (
-                <div className="flex flex-col items-center w-[600px] relative h-12">
-                  <div className="absolute top-0 left-1/4 right-1/4 h-px bg-white/20" />
-                  <div className="absolute top-0 left-1/4 w-px h-full bg-white/20" />
-                  <div className="absolute top-0 right-1/4 w-px h-full bg-white/20" />
-                  <div className="absolute bottom-0 left-1/4 right-1/4 h-px bg-white/20" />
-                  <div className="absolute top-full left-1/2 w-px h-6 bg-white/20" />
-                </div>
-              )}
+              {/* Join Connector - Only show if not terminal and there is a next step */}
+              {index < nodes.length - 1 && (() => {
+                const isYesTerminal = node.config.yesBranch?.some(n => n.type === 'end');
+                const isNoTerminal = node.config.noBranch?.some(n => n.type === 'end');
+                
+                if (isYesTerminal && isNoTerminal) return null;
+
+                return (
+                  <div className="flex flex-col items-center w-[600px] relative h-12">
+                    <div className="absolute top-0 left-1/4 right-1/4 h-px bg-white/20" />
+                    {!isYesTerminal && <div className="absolute top-0 left-1/4 w-px h-full bg-white/20" />}
+                    {!isNoTerminal && <div className="absolute top-0 right-1/4 w-px h-full bg-white/20" />}
+                    <div className="absolute bottom-0 left-1/4 right-1/4 h-px bg-white/20" />
+                    <div className="absolute top-full left-1/2 w-px h-6 bg-white/20" />
+                  </div>
+                );
+              })()}
             </div>
           ) : (
             // Next item connector
-            index < nodes.length - 1 && (
+            index < nodes.length - 1 && node.type !== 'end' && (
               <div className="w-px h-6 bg-white/20 my-2" />
             )
           )}
         </div>
       ))}
+      {/* Show an AddNodeButton at the end of the list ONLY if it's NOT ending with a condition or an END node */}
+      {nodes.length > 0 && 
+       nodes[nodes.length - 1].type !== "condition" && 
+       nodes[nodes.length - 1].type !== "end" && (
+        <AddNodeButton
+          previousStep={nodes[nodes.length - 1] || previousStep}
+          onClick={(step) => {
+            onAdd(nodes[nodes.length - 1].id, step);
+          }}
+        />
+      )}
+
+      {/* If the list is empty, we need one button to start (either root or branch) */}
+      {nodes.length === 0 && (
+        <AddNodeButton
+          previousStep={previousStep}
+          onClick={(step) => {
+            if (branchOwnerId && branchType) {
+              onAdd(branchOwnerId, step, branchType);
+            } else {
+              onAdd("root", step);
+            }
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -1238,6 +1280,7 @@ function NodeCard({
   selectedProspect,
   replaceVariables,
   formatConditionLabel,
+  count = 0,
 }: {
   node: StepNode;
   stepNumber?: string;
@@ -1245,6 +1288,7 @@ function NodeCard({
   selectedProspect?: any;
   replaceVariables?: (text: string, prospect: any, stepId?: string) => string;
   formatConditionLabel?: (label: string, prospect: any) => string;
+  count?: number;
 }) {
   const Icon = getIconForType(node.type, node.channel);
   const color = getColorForType(node.type, node.channel);
@@ -1267,15 +1311,25 @@ function NodeCard({
           <Icon className="size-4" />
         </div>
         <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 mb-1">
-            {stepNumber && (
-              <span className="text-[10px] font-bold bg-white/10 text-white/70 px-1.5 py-0.5 rounded uppercase">
-                Step {stepNumber}
-              </span>
+          <div className="flex items-center justify-between mb-1">
+            <div className="flex items-center gap-2">
+              {stepNumber && (
+                <span className="text-[10px] font-bold bg-white/10 text-white/70 px-1.5 py-0.5 rounded uppercase">
+                  Step {stepNumber}
+                </span>
+              )}
+              <p className="text-sm font-bold text-white leading-tight truncate">
+                {displayName}
+              </p>
+            </div>
+            {count > 0 && (
+              <div className="px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 flex items-center gap-1.5">
+                <Users className="size-2.5 text-emerald-400" />
+                <span className="text-[10px] font-black text-emerald-400">
+                  {count}
+                </span>
+              </div>
             )}
-            <p className="text-sm font-bold text-white leading-tight truncate">
-              {displayName}
-            </p>
           </div>
           {node.channel && (
             <p className="text-[10px] uppercase tracking-wider text-white/40">

@@ -724,7 +724,9 @@ export function CampaignsListView({
                   <Briefcase className="size-5 text-white/70" />
                 </div>
                 <div>
-                  <h3 className="text-white font-semibold leading-tight group-hover:text-white transition-colors">{camp.display_name}</h3>
+                  <h3 className="text-white font-semibold leading-tight group-hover:text-white transition-colors">
+                    {camp.display_name || camp.name || "Campagne sans nom"}
+                  </h3>
                   <div className="flex items-center gap-1.5 mt-1">
                     <StatusDot status={camp.status} />
                     <span className="text-[10px] uppercase tracking-wider font-bold text-white/40">{STATUS_LABEL[camp.status] ?? camp.status}</span>
@@ -733,15 +735,28 @@ export function CampaignsListView({
               </div>
             </div>
 
-            {camp.config?.target_icp?.sectors && (
-              <div className="relative z-10 mb-4 flex flex-wrap gap-2">
-                {camp.config.target_icp.sectors.slice(0, 2).map(s => (
-                  <span key={s} className="px-2 py-0.5 rounded-md bg-blue-500/10 border border-blue-500/20 text-[10px] text-blue-400 font-bold uppercase tracking-wider">
-                    {s}
-                  </span>
-                ))}
-              </div>
-            )}
+            {(() => {
+              const icp = camp.config?.target_icp;
+              const combined = [
+                ...(icp?.sectors || []),
+                ...(icp?.industries || []),
+              ].filter((s) => s && s !== "N/A");
+
+              if (combined.length === 0) return null;
+
+              return (
+                <div className="relative z-10 mb-4 flex flex-wrap gap-2">
+                  {combined.slice(0, 2).map((s) => (
+                    <span
+                      key={s}
+                      className="px-2 py-0.5 rounded-md bg-blue-500/10 border border-blue-500/20 text-[10px] text-blue-400 font-bold uppercase tracking-wider"
+                    >
+                      {s}
+                    </span>
+                  ))}
+                </div>
+              );
+            })()}
 
             <div className="mt-auto pt-5 border-t border-white/5 grid grid-cols-2 gap-4 relative z-10">
               <div>

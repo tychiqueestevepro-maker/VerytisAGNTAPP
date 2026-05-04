@@ -1,6 +1,7 @@
 "use server";
 
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { createSupabaseServiceClient } from "@/lib/supabase/server";
 import { getUserWithProfile } from "@/lib/auth";
 import { preScoreProspect } from "@/lib/prospecting/scoring";
 import { logCampaignActivities } from "@/lib/flows/activity";
@@ -16,12 +17,14 @@ function field(row: CsvProspect, key: string): string | null {
 
 export async function importProspectsCSV(
   campaignId: string,
-  prospects: CsvProspect[]
+  prospects: CsvProspect[],
+  listId?: string | null,
 ) {
   const user = await getUserWithProfile();
   if (!user?.profile?.client_id) return { success: false, error: "Non authentifié" };
 
   const supabase = await createSupabaseServerClient();
+  const serviceClient = createSupabaseServiceClient();
   const clientId = user.profile.client_id;
 
   const { data: campaign } = await supabase
@@ -119,6 +122,52 @@ export async function importProspectsCSV(
       source: "csv_import",
     },
   })));
+
+  // --- Link prospects to a contact list ---
+  const finalProspects = insertedProspects ?? [];
+  if (finalProspects.length > 0) {
+    let resolvedListId = listId || null;
+
+    // Auto-resolve a default list if none provided
+    if (!resolvedListId) {
+      const { data: clientLists } = await serviceClient
+        .from("contact_lists")
+        .select("id, name")
+        .eq("client_id", clientId)
+        .order("created_at", { ascending: false }); // Newest first
+
+      if (clientLists && clientLists.length > 0) {
+        const targetList = clientLists.find((l: { name: string }) => {
+          const n = l.name.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+          return n === 'alpha' || n === 'beta';
+        });
+        resolvedListId = targetList ? targetList.id : clientLists[0].id;
+      } else {
+        // Create a default list
+        const { data: newList } = await serviceClient
+          .from("contact_lists")
+          .insert({ client_id: clientId, name: "Alpha", description: "Liste par défaut" })
+          .select("id")
+          .single();
+        if (newList) resolvedListId = newList.id;
+      }
+    }
+
+    if (resolvedListId) {
+      const listMembers = finalProspects.map((p) => ({
+        list_id: resolvedListId,
+        prospect_id: p.id,
+      }));
+
+      const { error: listError } = await serviceClient
+        .from("prospect_list_members")
+        .upsert(listMembers, { onConflict: "list_id, prospect_id" });
+
+      if (listError) {
+        console.error("CSV Import - Error adding to list members:", listError);
+      }
+    }
+  }
 
   return { success: true, count: validProspects.length };
 }

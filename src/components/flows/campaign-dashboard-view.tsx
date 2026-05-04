@@ -598,9 +598,11 @@ const getTitleAndCompany = (role: string, companyName?: string | null) => {
 function CsvImportModal({
   onClose,
   campaignId,
+  listId,
 }: {
   onClose: () => void;
   campaignId: string;
+  listId?: string | null;
 }) {
   const router = useRouter();
   const [isUploading, setIsUploading] = useState(false);
@@ -637,6 +639,7 @@ function CsvImportModal({
           const res = await importProspectsCSV(
             campaignId,
             results.data as Record<string, unknown>[],
+            listId,
           );
           if (res.success) {
             router.refresh();
@@ -733,9 +736,13 @@ function CsvImportModal({
 function FlowCanvasModal({
   onClose,
   sequenceSteps,
+  stepCounts = {},
+  completedCount = 0,
 }: {
   onClose: () => void;
   sequenceSteps?: any[];
+  stepCounts?: Record<string, number>;
+  completedCount?: number;
 }) {
   const stepsData =
     sequenceSteps && sequenceSteps.length > 0
@@ -756,9 +763,9 @@ function FlowCanvasModal({
               : s.action_type === "wait"
                 ? "text-amber-400"
                 : "text-blue-400",
-          statsText: "0",
-          statsColor: "text-white/40",
-          statsBg: "bg-white/5",
+          statsText: String(stepCounts[s.id] || 0),
+          statsColor: (stepCounts[s.id] || 0) > 0 ? "text-emerald-400" : "text-white/40",
+          statsBg: (stepCounts[s.id] || 0) > 0 ? "bg-emerald-500/10" : "bg-white/5",
         }))
       : [];
 
@@ -1031,7 +1038,18 @@ function FlowCanvasModal({
                 </div>
               )}
               {stepsData.length > 0 && (
-                <div className="mt-6 size-3 rounded-full border-2 border-white/20 bg-[#0A0A0A]" />
+                <div className="mt-8 flex flex-col items-center">
+                  <div className="w-px h-8 bg-gradient-to-b from-white/20 to-transparent" />
+                  <div className="px-6 py-3 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 flex flex-col items-center gap-1 shadow-[0_0_20px_rgba(16,185,129,0.1)]">
+                    <CheckCircle2 className="size-5 text-emerald-400 mb-1" />
+                    <span className="text-[10px] font-black text-emerald-400 uppercase tracking-[0.2em]">
+                      Terminés
+                    </span>
+                    <span className="text-2xl font-bold text-white">
+                      {completedCount}
+                    </span>
+                  </div>
+                </div>
               )}
             </motion.div>
           </div>
@@ -1061,6 +1079,9 @@ function SettingsModal({
   const [localSearchTime, setLocalSearchTime] = useState(
     campaign.config?.prospection?.search_time || "09:00",
   );
+  const [localEndTime, setLocalEndTime] = useState(
+    campaign.config?.prospection?.end_time || "18:00",
+  );
   const [localTimezone, setLocalTimezone] = useState(
     campaign.config?.prospection?.timezone || "Europe/Paris",
   );
@@ -1075,6 +1096,7 @@ function SettingsModal({
       prospection: {
         prospects_per_day: localProspectsPerDay,
         search_time: localSearchTime,
+        end_time: localEndTime,
         timezone: localTimezone,
         selected_days: localSelectedDays,
       },
@@ -1190,16 +1212,31 @@ function SettingsModal({
                             Secteurs & Taille
                           </label>
                           <div className="flex flex-wrap gap-2">
-                            {(
-                              campaign.config?.target_icp?.sectors || ["N/A"]
-                            ).map((s: string) => (
-                              <span
-                                key={s}
-                                className="px-2.5 py-1 rounded-md bg-emerald-500/10 border border-emerald-500/20 text-[10px] text-emerald-400 font-medium"
-                              >
-                                {s}
-                              </span>
-                            ))}
+                            {(() => {
+                              const icp = campaign.config?.target_icp;
+                              const combined = [
+                                ...(icp?.sectors || []),
+                                ...(icp?.industries || []),
+                                ...(icp?.company_size || []),
+                                ...(icp?.company_sizes || []),
+                              ].filter((s) => s && s !== "N/A");
+
+                              if (combined.length === 0)
+                                return (
+                                  <span className="px-2.5 py-1 rounded-md bg-white/5 border border-white/5 text-[10px] text-white/20 font-medium">
+                                    N/A
+                                  </span>
+                                );
+
+                              return combined.map((s: string) => (
+                                <span
+                                  key={s}
+                                  className="px-2.5 py-1 rounded-md bg-emerald-500/10 border border-emerald-500/20 text-[10px] text-emerald-400 font-medium"
+                                >
+                                  {s}
+                                </span>
+                              ));
+                            })()}
                           </div>
                         </div>
                         <div className="space-y-2">
@@ -1334,9 +1371,9 @@ function SettingsModal({
                             <span className="text-white/20">à</span>
                             <input
                               type="time"
-                              value="00:00"
-                              disabled
-                              className="flex-1 bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white/40 focus:outline-none"
+                              value={localEndTime}
+                              onChange={(e) => setLocalEndTime(e.target.value)}
+                              className="flex-1 bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-blue-500/50"
                             />
                           </div>
                         </div>
@@ -1473,12 +1510,16 @@ export function CampaignDashboardView({
   activities,
   sequenceSteps,
   extensionOverview,
+  stepCounts = {},
+  completedCount = 0,
 }: {
   campaign: Campaign;
   prospects: Prospect[];
   activities: ActivityLog[];
   sequenceSteps?: any[];
   extensionOverview?: ExtensionOverview;
+  stepCounts?: Record<string, number>;
+  completedCount?: number;
 }) {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -1646,7 +1687,13 @@ export function CampaignDashboardView({
     selectedListId,
     initialProspects,
   ]);
-  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+   const [selectedIds, setSelectedIds] = useState<string[]>([]);
+ 
+   useEffect(() => {
+     if (!isProspectsModalOpen) {
+       setSelectedIds([]);
+     }
+   }, [isProspectsModalOpen]);
   const [isDeleting, setIsDeleting] = useState(false);
   const [qualifyingIds, setQualifyingIds] = useState<string[]>([]);
   const [sequenceDecisionIds, setSequenceDecisionIds] = useState<string[]>([]);
@@ -2225,8 +2272,13 @@ export function CampaignDashboardView({
                               {step.action_type}
                             </p>
                           </div>
-                          {i === 0 && (
-                            <div className="size-1.5 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.3)]" />
+                          {stepCounts[step.id] > 0 && (
+                            <div className="px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 flex items-center gap-1.5">
+                              <Users className="size-2.5 text-emerald-400" />
+                              <span className="text-[10px] font-black text-emerald-400">
+                                {stepCounts[step.id]}
+                              </span>
+                            </div>
                           )}
                         </div>
                       ))}
@@ -2330,15 +2382,38 @@ export function CampaignDashboardView({
                 {[
                   {
                     label: "Cible",
-                    value:
-                      campaign.config?.target_icp?.sectors?.length > 0
-                        ? campaign.config.target_icp.sectors
-                            .slice(0, 3)
-                            .join(", ") +
-                          (campaign.config.target_icp.sectors.length > 3
-                            ? ".."
-                            : "")
-                        : "Cible sans config",
+                    value: (() => {
+                      const icp = campaign.config?.target_icp;
+                      const sectors = [
+                        ...(icp?.sectors || []),
+                        ...(icp?.industries || []),
+                      ].filter((s) => s && s !== "N/A");
+                      const personas = (campaign.config?.personas || []).filter(
+                        (p) => p && p !== "N/A",
+                      );
+
+                      const sectorPart =
+                        sectors.length > 0 ? sectors.slice(0, 1)[0] : "";
+                      const personaPart =
+                        personas.length > 0 ? personas.slice(0, 2).join(", ") : "";
+
+                      if (sectorPart && personaPart) {
+                        return `${sectorPart} / ${personaPart}${personas.length > 2 ? ".." : ""}`;
+                      } else if (personaPart) {
+                        return `${personaPart}${personas.length > 2 ? ".." : ""}`;
+                      } else if (sectorPart) {
+                        return `${sectorPart}${sectors.length > 1 ? ".." : ""}`;
+                      }
+
+                      const locations = (icp?.locations || []).filter(
+                        (l) => l && l !== "N/A",
+                      );
+                      if (locations.length > 0) {
+                        return locations.slice(0, 2).join(", ");
+                      }
+
+                      return "Sans configuration";
+                    })(),
                   },
                   { label: "Canal", value: "LinkedIn" },
                   {
@@ -2447,7 +2522,10 @@ export function CampaignDashboardView({
                   {/* SUB TABS */}
                   <div className="flex items-center bg-black/40 p-0.5 rounded-lg border border-[#1F1F1F] shrink-0">
                     <button
-                      onClick={() => setActiveProspectTab("campaign")}
+                      onClick={() => {
+                        setActiveProspectTab("campaign");
+                        setSelectedIds([]);
+                      }}
                       className={cn(
                         "px-3 py-1 rounded-md text-[9px] font-bold uppercase tracking-wider transition-all",
                         activeProspectTab === "campaign"
@@ -2458,7 +2536,10 @@ export function CampaignDashboardView({
                       Campagne
                     </button>
                     <button
-                      onClick={() => setActiveProspectTab("lists")}
+                      onClick={() => {
+                        setActiveProspectTab("lists");
+                        setSelectedIds([]);
+                      }}
                       className={cn(
                         "px-3 py-1 rounded-md text-[9px] font-bold uppercase tracking-wider transition-all",
                         activeProspectTab === "lists"
@@ -2469,7 +2550,10 @@ export function CampaignDashboardView({
                       Listes
                     </button>
                     <button
-                      onClick={() => setActiveProspectTab("all")}
+                      onClick={() => {
+                        setActiveProspectTab("all");
+                        setSelectedIds([]);
+                      }}
                       className={cn(
                         "px-3 py-1 rounded-md text-[9px] font-bold uppercase tracking-wider transition-all",
                         activeProspectTab === "all"
@@ -2488,7 +2572,10 @@ export function CampaignDashboardView({
                         <FolderOpen className="size-3 text-white/30" />
                         <select
                           value={selectedListId || ""}
-                          onChange={(e) => setSelectedListId(e.target.value)}
+                          onChange={(e) => {
+                            setSelectedListId(e.target.value);
+                            setSelectedIds([]);
+                          }}
                           className="bg-transparent text-[9px] font-bold text-white/70 uppercase tracking-wider focus:outline-none cursor-pointer"
                         >
                           {contactLists.map((list) => (
@@ -3411,6 +3498,7 @@ export function CampaignDashboardView({
           <CsvImportModal
             onClose={() => setIsCsvModalOpen(false)}
             campaignId={campaign.id}
+            listId={selectedListId}
           />
         )}
       </AnimatePresence>

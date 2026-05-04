@@ -44,6 +44,7 @@ type ProspectingCampaignConfig = {
     mode?: string;
     prospects_per_day?: number;
     search_time?: string;
+    end_time?: string;
     timezone?: string;
     sector?: string;
     location?: string;
@@ -323,6 +324,8 @@ export async function createProspectingCampaign(
       mode: "auto",
       prospects_per_day: 20,
       search_time: "09:00",
+      end_time: "18:00",
+      timezone: "Europe/Paris",
       sector: "",
       location: "",
       decision_maker: "",
@@ -527,6 +530,14 @@ export async function saveSequenceSteps(
     if (insertError) {
       console.error("Insert steps error:", insertError);
       return { error: "Erreur lors de l'enregistrement des étapes" };
+    }
+
+    // --- SYNC PENDING ACTIONS ---
+    try {
+      await syncPendingActionsWithNewSteps(supabase, campaignId, steps);
+    } catch (syncErr) {
+      console.error("Sync pending actions failed:", syncErr);
+      // We don't return error here because the steps ARE saved
     }
   }
 
@@ -919,6 +930,105 @@ export async function qualifyProspects(prospectIds: string[]): Promise<{
   });
 
   return { data, errors, success: errors.length === 0 };
+}
+
+// ---------------------------------------------------------------------------
+// HELPER: Sync pending actions with updated sequence steps
+// ---------------------------------------------------------------------------
+async function syncPendingActionsWithNewSteps(
+  supabase: any,
+  campaignId: string,
+  steps: any[],
+) {
+  // 1. Create a map of stepId -> template message
+  const messageTemplates: Record<string, string> = {};
+
+  function collectTemplates(items: any[]) {
+    for (const item of items || []) {
+      if (item.id && item.config?.message) {
+        messageTemplates[String(item.id)] = item.config.message;
+      }
+      if (item.config?.yesBranch) collectTemplates(item.config.yesBranch);
+      if (item.config?.noBranch) collectTemplates(item.config.noBranch);
+    }
+  }
+  collectTemplates(steps);
+
+  // 2. Fetch all ready/pending actions for this campaign
+  const { data: actions } = await supabase
+    .from("extension_actions")
+    .select("id, message_id, prospect_id, payload")
+    .eq("campaign_id", campaignId)
+    .in("status", ["pending", "ready"]);
+
+  if (!actions || actions.length === 0) return;
+
+  // 3. Update each action if its step exists in our templates
+  for (const action of actions) {
+    const payload = (action.payload || {}) as any;
+    const stepId = payload.step_id;
+    const newTemplate = messageTemplates[String(stepId)];
+
+    if (newTemplate) {
+      // Fetch prospect for variables replacement and personalization check
+      const { data: prospect } = await supabase
+        .from("prospects")
+        .select("id, full_name, decision_maker, company_name, role, role_title, location, extra_data")
+        .eq("id", action.prospect_id)
+        .single();
+
+      if (!prospect) continue;
+
+      // --- CHECK FOR PERSONALIZATION ---
+      const personalizations = prospect.extra_data?.personalized_sequence?.steps || prospect.extra_data?.personalized_sequence || [];
+      const personalizedStep = Array.isArray(personalizations) 
+        ? personalizations.find((ps: any) => String(ps.step_id || ps.id) === String(stepId))
+        : null;
+
+      const hasPersonalizedMessage = personalizedStep && (personalizedStep.personalized_message || personalizedStep.message);
+
+      if (hasPersonalizedMessage) {
+        // Skip updating this action as it has a specific personalization
+        continue;
+      }
+
+      // Simple variable replacement
+      const fullName = prospect.full_name || prospect.decision_maker || "";
+      const [firstName = "", ...rest] = String(fullName).trim().split(/\s+/);
+      const lastName = rest.join(" ");
+
+      const newMessage = newTemplate
+        .replace(/{{first_name}}/g, firstName)
+        .replace(/{{last_name}}/g, lastName)
+        .replace(/{{company}}/g, prospect.company_name || "")
+        .replace(/{{role}}/g, prospect.role_title || prospect.role || "")
+        .replace(/{{location}}/g, prospect.location || "")
+        .trim();
+
+      // Update extension_actions payload
+      await supabase
+        .from("extension_actions")
+        .update({
+          payload: {
+            ...payload,
+            message: newMessage,
+          },
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", action.id);
+
+      // Update associated message if exists
+      if (action.message_id) {
+        await supabase
+          .from("messages")
+          .update({
+            body: newMessage,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", action.message_id);
+      }
+    }
+  }
 }
 
 type ProspectSequenceDecision = "confirmed" | "paused" | "removed";
@@ -1400,6 +1510,13 @@ export async function updateProspectPersonalization(
     return { error: "Impossible de sauvegarder la personnalisation" };
   }
 
+  // --- SYNC WITH QUEUE ---
+  try {
+    await syncProspectActionsWithPersonalization(supabase, prospectId, personalizedSequence);
+  } catch (syncErr) {
+    console.error("Sync personalization with queue failed:", syncErr);
+  }
+
   revalidatePath("/flows/prospecting");
   return { success: true };
 }
@@ -1439,12 +1556,78 @@ export async function bulkUpdateProspectPersonalizations(
         `Error updating personalization for ${update.prospectId}:`,
         error,
       );
+    } else {
+      // --- SYNC WITH QUEUE ---
+      try {
+        await syncProspectActionsWithPersonalization(supabase, update.prospectId, update.personalizedSequence);
+      } catch (syncErr) {
+        console.error(`Sync for ${update.prospectId} failed:`, syncErr);
+      }
     }
   }
 
   revalidatePath("/flows/prospecting");
   return { success: true };
 }
+
+// ---------------------------------------------------------------------------
+// HELPER: Sync a single prospect's actions with their personalization
+// ---------------------------------------------------------------------------
+async function syncProspectActionsWithPersonalization(
+  supabase: any,
+  prospectId: string,
+  personalizedSequence: any,
+) {
+  const steps = Array.isArray(personalizedSequence?.steps) 
+    ? personalizedSequence.steps 
+    : Array.isArray(personalizedSequence) ? personalizedSequence : [];
+  
+  if (steps.length === 0) return;
+
+  // 1. Fetch ready/pending actions
+  const { data: actions } = await supabase
+    .from("extension_actions")
+    .select("id, message_id, payload")
+    .eq("prospect_id", prospectId)
+    .in("status", ["pending", "ready"]);
+
+  if (!actions || actions.length === 0) return;
+
+  // 2. Update actions
+  for (const action of actions) {
+    const payload = (action.payload || {}) as any;
+    const stepId = payload.step_id;
+    const personalizedStep = steps.find((s: any) => String(s.step_id || s.id) === String(stepId));
+    
+    const newMessage = personalizedStep?.personalized_message || personalizedStep?.message;
+
+    if (newMessage && typeof newMessage === "string" && newMessage.trim()) {
+      // Update extension_actions
+      await supabase
+        .from("extension_actions")
+        .update({
+          payload: {
+            ...payload,
+            message: newMessage.trim(),
+          },
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", action.id);
+
+      // Update messages table
+      if (action.message_id) {
+        await supabase
+          .from("messages")
+          .update({
+            body: newMessage.trim(),
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", action.message_id);
+      }
+    }
+  }
+}
+
 
 // ---------------------------------------------------------------------------
 // MOVE: Move prospects to another campaign

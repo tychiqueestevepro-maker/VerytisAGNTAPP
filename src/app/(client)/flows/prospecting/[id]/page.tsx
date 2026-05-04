@@ -327,7 +327,7 @@ export default async function CampaignDetailPage({ params }: Props) {
 
   const { data: extensionActions } = await supabase
     .from("extension_actions")
-    .select("status, action_type")
+    .select("status, action_type, prospect_id, payload, scheduled_at")
     .eq("client_id", user.profile.client_id)
     .eq("campaign_id", id);
 
@@ -357,6 +357,48 @@ export default async function CampaignDetailPage({ params }: Props) {
     },
     { total: 0, sent: 0, replies: repliedCount } as Record<string, number>,
   );
+
+  // Calculate Step Counts
+  const stepCounts: Record<string, number> = {};
+  let completedCount = 0;
+
+  if (extensionActions && extensionActions.length > 0) {
+    const actionsByProspect = (extensionActions as any[]).reduce(
+      (acc, action) => {
+        const pid = action.prospect_id;
+        if (!acc[pid]) acc[pid] = [];
+        acc[pid].push(action);
+        return acc;
+      },
+      {} as Record<string, any[]>,
+    );
+
+    for (const pid in actionsByProspect) {
+      const pActions = actionsByProspect[pid].sort(
+        (a, b) =>
+          new Date(a.scheduled_at).getTime() -
+          new Date(b.scheduled_at).getTime(),
+      );
+
+      // Current step is the first one that is NOT finished
+      const currentAction = pActions.find(
+        (a) => !["completed", "cancelled", "failed"].includes(a.status),
+      );
+
+      if (currentAction) {
+        const stepId = currentAction.payload?.step_id;
+        if (stepId) {
+          stepCounts[stepId] = (stepCounts[stepId] || 0) + 1;
+        }
+      } else {
+        // If all actions are finished, and at least one was completed
+        const hasCompleted = pActions.some((a) => a.status === "completed");
+        if (hasCompleted) {
+          completedCount++;
+        }
+      }
+    }
+  }
 
   const integrationExtraData =
     (extensionIntegration?.extra_data as Record<string, unknown> | null) || {};
@@ -395,6 +437,8 @@ export default async function CampaignDetailPage({ params }: Props) {
           cloud_session_status: cloudSession?.status || null,
           action_stats: actionStats,
         }}
+        stepCounts={stepCounts}
+        completedCount={completedCount}
       />
     </>
   );

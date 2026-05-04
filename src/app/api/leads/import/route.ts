@@ -570,14 +570,51 @@ export async function POST(request: Request) {
       },
     })));
 
-    // Link prospects to the list if listId is provided
-    if (listId && finalProspects.length > 0) {
+    // Resolve a list ID: use the provided one, or auto-resolve a default list for this client
+    let resolvedListId = listId || null;
+
+    if (!resolvedListId && clientId) {
+      console.log('[API] No listId provided, auto-resolving default list for client:', clientId);
+      const { data: clientLists } = await supabase
+        .from('contact_lists')
+        .select('id, name')
+        .eq('client_id', clientId)
+        .order('created_at', { ascending: false }); // Newest first
+
+      if (clientLists && clientLists.length > 0) {
+        // Try to find a list named "Alpha" or "Beta" (case-insensitive, handling accents)
+        const targetList = clientLists.find((l: { name: string }) => {
+          const n = l.name.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+          return n === 'alpha' || n === 'beta';
+        });
+        
+        resolvedListId = targetList ? targetList.id : clientLists[0].id;
+        console.log('[API] Auto-resolved list:', { resolvedListId, listName: targetList?.name || clientLists[0].name });
+      } else {
+        // Create a default list if none exists
+        const { data: newList, error: createListError } = await supabase
+          .from('contact_lists')
+          .insert({ client_id: clientId, name: 'Alpha', description: 'Liste par défaut' })
+          .select('id')
+          .single();
+
+        if (!createListError && newList) {
+          resolvedListId = newList.id;
+          console.log('[API] Created default list "Alpha":', resolvedListId);
+        } else {
+          console.warn('[API] Failed to create default list:', createListError?.message);
+        }
+      }
+    }
+
+    // Link prospects to the list
+    if (resolvedListId && finalProspects.length > 0) {
       const listMembers = finalProspects.map((p: { id: string }) => ({
-        list_id: listId,
+        list_id: resolvedListId,
         prospect_id: p.id
       }));
 
-      console.log('[API] Adding to list members:', { listId, membersCount: listMembers.length });
+      console.log('[API] Adding to list members:', { listId: resolvedListId, membersCount: listMembers.length });
 
       // Use UPSERT for list members to avoid primary key violations on duplicates
       const { error: listError } = await supabase

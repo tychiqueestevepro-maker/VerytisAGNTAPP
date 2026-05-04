@@ -157,23 +157,66 @@ function applyTimingConstraints(
   searchTime: string = "09:00",
   timezone: string = "Europe/Paris",
   selectedDays: number[] = [1, 2, 3, 4, 5],
+  endTime: string = "18:00",
 ) {
+  // 1. Helper to get date parts in the target timezone
+  const getInTimezone = (d: Date, tz: string) => {
+    const formatter = new Intl.DateTimeFormat("en-US", {
+      timeZone: tz,
+      year: "numeric",
+      month: "numeric",
+      day: "numeric",
+      hour: "numeric",
+      minute: "numeric",
+      second: "numeric",
+      hour12: false,
+    });
+    const parts = formatter.formatToParts(d);
+    const map: any = {};
+    parts.forEach((p) => (map[p.type] = p.value));
+    return map;
+  };
+
+  // 2. Initial target date
   let target = new Date(date);
-  const [hours, minutes] = (searchTime || "09:00").split(":").map(Number);
+  const [startH, startM] = searchTime.split(":").map(Number);
+  const [endH, endM] = endTime.split(":").map(Number);
 
-  // Set the target time
-  target.setHours(hours, minutes, 0, 0);
-
-  // If the target time for today has already passed, move to the next day
-  if (target.getTime() < date.getTime()) {
-    target.setDate(target.getDate() + 1);
-  }
-
-  // Ensure the target date is one of the selected days
-  // JS getDay(): 0 = Sunday, 1 = Monday, ..., 6 = Saturday
   let attempts = 0;
-  while (!selectedDays.includes(target.getDay()) && attempts < 10) {
+  while (attempts < 15) {
+    const tzParts = getInTimezone(target, timezone);
+    const currentH = Number(tzParts.hour);
+    const currentM = Number(tzParts.minute);
+    const currentDay = target.getDay(); // 0=Sun, 1=Mon, ..., 6=Sat
+
+    // Is it a valid day?
+    const isValidDay = selectedDays.includes(currentDay);
+
+    // Is it within hours?
+    const isTooEarly = currentH < startH || (currentH === startH && currentM < startM);
+    const isTooLate = currentH > endH || (currentH === endH && currentM >= endM);
+
+    if (isValidDay && !isTooLate) {
+      if (isTooEarly) {
+        // Just adjust to start time on the same day
+        const diffH = startH - currentH;
+        const diffM = startM - currentM;
+        target.setHours(target.getHours() + diffH, target.getMinutes() + diffM, 0, 0);
+      }
+      return target;
+    }
+
+    // Move to next day at start time
     target.setDate(target.getDate() + 1);
+    const tzNextParts = getInTimezone(target, timezone);
+    const nextH = Number(tzNextParts.hour);
+    const nextM = Number(tzNextParts.minute);
+    
+    // Reset to start time in the target timezone
+    const diffH = startH - nextH;
+    const diffM = startM - nextM;
+    target.setHours(target.getHours() + diffH, target.getMinutes() + diffM, 0, 0);
+
     attempts++;
   }
 
@@ -195,6 +238,7 @@ export async function enqueueExtensionActionsForQualifiedProspect(input: Enqueue
 
   const timing = campaign.config?.prospection || {};
   const searchTime = timing.search_time || "09:00";
+  const endTime = timing.end_time || "18:00";
   const timezone = timing.timezone || "Europe/Paris";
   const selectedDays = timing.selected_days || [1, 2, 3, 4, 5];
 
@@ -204,7 +248,7 @@ export async function enqueueExtensionActionsForQualifiedProspect(input: Enqueue
   const flatSteps = flattenSteps(sequenceSteps, prospect);
 
   // Initialize scheduledAt based on campaign constraints
-  let scheduledAt = applyTimingConstraints(new Date(), searchTime, timezone, selectedDays);
+  let scheduledAt = applyTimingConstraints(new Date(), searchTime, timezone, selectedDays, endTime);
 
   let created = 0;
   let skipped = 0;
@@ -213,7 +257,7 @@ export async function enqueueExtensionActionsForQualifiedProspect(input: Enqueue
     if (item.kind === "wait") {
       // For wait steps, we add days and then re-apply constraints to ensure it lands on a valid day/time
       scheduledAt = addDays(scheduledAt, item.days);
-      scheduledAt = applyTimingConstraints(scheduledAt, searchTime, timezone, selectedDays);
+      scheduledAt = applyTimingConstraints(scheduledAt, searchTime, timezone, selectedDays, endTime);
       continue;
     }
 
