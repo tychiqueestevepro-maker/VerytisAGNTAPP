@@ -2,6 +2,7 @@ import Link from "next/link";
 import { SectionHeading } from "@/components/layout/section-heading";
 import { StatusDot, statusLabel } from "@/components/layout/status-dot";
 import type { Status } from "@/types/models";
+import { useTranslations } from "next-intl";
 
 type Row = {
   id: string;
@@ -14,12 +15,15 @@ type Row = {
 export function ListPage({ 
   title, 
   rows, 
-  emptyState = "Aucun élément trouvé." 
+  emptyState
 }: { 
   title: string; 
   rows: Row[];
   emptyState?: string;
 }) {
+  const t = useTranslations("Common");
+  const finalEmptyState = emptyState ?? t("no_items_found");
+
   return (
     <div className="pt-2">
       <SectionHeading>{title}</SectionHeading>
@@ -53,7 +57,7 @@ export function ListPage({
           })
         ) : (
           <div className="py-12">
-            <p className="text-white/40 italic">{emptyState}</p>
+            <p className="text-white/40 italic">{finalEmptyState}</p>
           </div>
         )}
       </div>

@@ -44,7 +44,10 @@ JSON strict uniquement
   "locations": ["Pays 1", "Pays 2"],
   "sources": ["LinkedIn", "Site web"],
   "tone": "ton choisi"
-}`;
+}
+
+RÈGLE DE LANGUE:
+Tu DOIS impérativement rédiger TOUS les champs (reasoning, offer, icp_industries, icp_roles, locations) en {language}.`;
 
 // ─── Scraper ──────────────────────────────────────────────────────────────────
 
@@ -139,7 +142,7 @@ export interface AnalysisResult {
   tone: string;
 }
 
-export async function analyzeWebsite(url: string): Promise<{ data: AnalysisResult | null; error: string | null }> {
+export async function analyzeWebsite(url: string, language: string = "français"): Promise<{ data: AnalysisResult | null; error: string | null }> {
   // 1. Auth
   const user = await getUserWithProfile();
   if (!user?.profile?.client_id) {
@@ -175,7 +178,7 @@ export async function analyzeWebsite(url: string): Promise<{ data: AnalysisResul
       temperature: 0.3,
       response_format: { type: "json_object" },
       messages: [
-        { role: "system", content: SYSTEM_PROMPT },
+        { role: "system", content: SYSTEM_PROMPT.replace("{language}", language) },
         { role: "user", content: `Voici le contenu du site ${url} :\n\n${siteText}` },
       ],
     });

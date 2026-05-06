@@ -42,7 +42,8 @@ type ProspectingCampaignConfig = {
   target_description?: string;
   prospection?: {
     mode?: string;
-    prospects_per_day?: number;
+    messages_per_day?: number;
+    invitations_per_day?: number;
     search_time?: string;
     end_time?: string;
     timezone?: string;
@@ -56,6 +57,7 @@ type ProspectingCampaignConfig = {
     ignore_duplicates?: boolean;
     prioritize_linkedin?: boolean;
   };
+  language?: "français" | "english";
   [key: string]: unknown;
 };
 
@@ -282,8 +284,10 @@ export async function createProspectingCampaign(
       .insert({
         client_id: user.profile.client_id,
         flow_key: "prospecting",
-        display_name: "Prospection IA",
+        display_name: "Prospection Linkedin",
+        description: "Extraction et engagement autonome de leads qualifiés sur Linkedin.",
         status: "active",
+
         route: "/flows/prospecting",
       })
       .select()
@@ -301,7 +305,8 @@ export async function createProspectingCampaign(
     tone: "",
     prospection: {
       mode: "auto",
-      prospects_per_day: 20,
+      messages_per_day: 7,
+      invitations_per_day: 10,
       search_time: "09:00",
       end_time: "18:00",
       timezone: "Europe/Paris",
@@ -314,6 +319,7 @@ export async function createProspectingCampaign(
       ignore_duplicates: true,
       prioritize_linkedin: true,
     },
+    language: "français",
     ...initialConfig,
   };
 
@@ -344,7 +350,7 @@ export async function createProspectingCampaign(
       source: Array.isArray(defaultConfig.sources)
         ? defaultConfig.sources[0]
         : defaultConfig.source || null,
-      status: "active",
+      status: "paused",
       config: defaultConfig,
     })
     .select()
@@ -1455,6 +1461,66 @@ export async function getProspectsByList(
 }
 
 // ---------------------------------------------------------------------------
+export async function createContactList(
+  name: string,
+  description?: string,
+): Promise<{ success: boolean; data?: any; error?: string }> {
+  const user = await getUserWithProfile();
+  if (!user || !user.profile?.client_id)
+    return { success: false, error: "Non authentifié" };
+
+  const supabase = await createSupabaseServerClient();
+
+  const { data, error } = await supabase
+    .from("contact_lists")
+    .insert({
+      client_id: user.profile.client_id,
+      name,
+      description,
+    })
+    .select()
+    .single();
+
+  if (error) {
+    console.error("Create list error:", error);
+    return { success: false, error: "Erreur lors de la création de la liste" };
+  }
+
+  revalidatePath("/flows/prospecting");
+  return { success: true, data };
+}
+
+// DELETE: A contact list
+// ---------------------------------------------------------------------------
+export async function deleteContactList(
+  listId: string,
+): Promise<{ success: boolean; error?: string }> {
+  const user = await getUserWithProfile();
+  if (!user || !user.profile?.client_id)
+    return { success: false, error: "Non authentifié" };
+
+  const supabase = await createSupabaseServerClient();
+
+  // 1. Members will be deleted by DB cascade if configured, 
+  // but let's be explicit if not sure about cascade rules on this specific junction.
+  await supabase.from("prospect_list_members").delete().eq("list_id", listId);
+
+  const { error } = await supabase
+    .from("contact_lists")
+    .delete()
+    .eq("id", listId)
+    .eq("client_id", user.profile.client_id);
+
+  if (error) {
+    console.error("Delete list error:", error);
+    return { success: false, error: "Erreur lors de la suppression de la liste" };
+  }
+
+  revalidatePath("/flows/prospecting");
+  return { success: true };
+}
+
+// ---------------------------------------------------------------------------
 // UPDATE PROSPECT PERSONALIZATION: Save manual edits to the sequence
 // ---------------------------------------------------------------------------
 export async function updateProspectPersonalization(
@@ -1624,11 +1690,17 @@ export async function moveProspectsToCampaign(
 
   const supabase = await createSupabaseServerClient();
 
-  // 1. Update campaign_id for these prospects
+  // 1. Update campaign_id and reset ICP context for these prospects
   const { error } = await supabase
     .from("prospects")
     .update({
       campaign_id: targetCampaignId,
+      fit_score: null,
+      pre_score: null,
+      pre_score_level: null,
+      qualification_status: "collected",
+      qualification_level: null,
+      qualification_reason: null,
       updated_at: new Date().toISOString(),
     })
     .in("id", prospectIds)

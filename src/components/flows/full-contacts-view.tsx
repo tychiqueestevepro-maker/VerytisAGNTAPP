@@ -67,8 +67,6 @@ import { SequenceBuilderModal } from "./sequence-builder";
 import { TopLine } from "@/components/layout/top-line";
 import { SectionHeading } from "@/components/layout/section-heading";
 import { cn } from "@/lib/utils";
-import { useTranslations } from "next-intl";
-import { CsvImportModal } from "./csv-import-modal";
 
 const fade = {
   initial: { opacity: 0, y: 12 },
@@ -569,7 +567,143 @@ const getTitleAndCompany = (role: string, companyName?: string | null) => {
 // CANVAS FLOW COMPONENTS (Now in a Modal)
 // ============================================================================
 
+function CsvImportModal({
+  onClose,
+  campaignId,
+  listId,
+}: {
+  onClose: () => void;
+  campaignId: string;
+  listId?: string | null;
+}) {
+  const router = useRouter();
+  const [isUploading, setIsUploading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setIsUploading(true);
+    setError(null);
+
+    try {
+      const Papa = (await import("papaparse")).default;
+      Papa.parse(file, {
+        header: true,
+        skipEmptyLines: true,
+        complete: async (results) => {
+          try {
+            const { createSupabaseBrowserClient } =
+              await import("@/lib/supabase/client");
+            const supabase = createSupabaseBrowserClient();
+
+            // Upload to storage for archiving
+            const timestamp = new Date().getTime();
+            const fileName = `${campaignId}_${timestamp}.csv`;
+
+            await supabase.storage.from("csv_imports").upload(fileName, file);
+          } catch (storageErr) {
+            console.error("Failed to archive CSV:", storageErr);
+          }
+
+          const { importProspectsCSV } = await import("@/lib/flows/import");
+          const res = await importProspectsCSV(
+            campaignId,
+            results.data as Record<string, unknown>[],
+            listId,
+          );
+          if (res.success) {
+            router.refresh();
+            onClose();
+          } else {
+            setError(res.error || "Erreur lors de l'import");
+            setIsUploading(false);
+          }
+        },
+        error: (err) => {
+          setError("Erreur de lecture du CSV");
+          setIsUploading(false);
+        },
+      });
+    } catch (err) {
+      setError("Erreur lors de l'import");
+      setIsUploading(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+      <motion.div
+        initial={{ opacity: 0, scale: 0.95 }}
+        animate={{ opacity: 1, scale: 1 }}
+        exit={{ opacity: 0, scale: 0.95 }}
+        className="w-full max-w-lg bg-[#0A0A0A] border border-white/10 rounded-2xl overflow-hidden flex flex-col relative shadow-2xl p-6"
+      >
+        <div className="flex items-center justify-between mb-6">
+          <h2 className="font-semibold text-lg text-white flex items-center gap-2">
+            <Upload className="size-5 text-white/70" /> Importer des contacts
+          </h2>
+          <button
+            onClick={onClose}
+            className="p-1.5 text-white/40 hover:text-white bg-white/5 hover:bg-white/10 rounded-md transition-colors"
+          >
+            <X className="size-4" />
+          </button>
+        </div>
+
+        <div className="space-y-4">
+          <p className="text-sm text-white/60">
+            Importez un fichier CSV UTF-8. Champs recommandés :{" "}
+            <code className="text-xs bg-white/5 px-1 py-0.5 rounded">
+              Email
+            </code>
+            ,{" "}
+            <code className="text-xs bg-white/5 px-1 py-0.5 rounded">
+              FirstName
+            </code>
+            ,{" "}
+            <code className="text-xs bg-white/5 px-1 py-0.5 rounded">
+              LastName
+            </code>
+            ,{" "}
+            <code className="text-xs bg-white/5 px-1 py-0.5 rounded">
+              CompanyName
+            </code>
+            ,{" "}
+            <code className="text-xs bg-white/5 px-1 py-0.5 rounded">
+              LinkedInURL
+            </code>
+            .
+          </p>
+
+          <div className="relative border-2 border-dashed border-white/20 rounded-xl p-8 hover:border-white/40 transition-colors bg-white/[0.02] text-center cursor-pointer">
+            <input
+              type="file"
+              accept=".csv"
+              onChange={handleFileUpload}
+              disabled={isUploading}
+              className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+            />
+            <div className="flex flex-col items-center justify-center pointer-events-none">
+              {isUploading ? (
+                <Loader2 className="size-8 text-emerald-500 animate-spin mb-3" />
+              ) : (
+                <Upload className="size-8 text-white/40 mb-3" />
+              )}
+              <p className="text-sm font-medium text-white">
+                {isUploading
+                  ? "Import en cours..."
+                  : "Cliquez ou glissez un fichier CSV"}
+              </p>
+            </div>
+          </div>
+          {error && <p className="text-sm text-red-400 mt-2">{error}</p>}
+        </div>
+      </motion.div>
+    </div>
+  );
+}
 
 function FlowCanvasModal({
   onClose,
@@ -914,11 +1048,8 @@ function SettingsModal({
   const [isSaving, setIsSaving] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
 
-  const [localMessagesPerDay, setLocalMessagesPerDay] = useState(
-    campaign.config?.prospection?.messages_per_day || 20,
-  );
-  const [localInvitationsPerDay, setLocalInvitationsPerDay] = useState(
-    campaign.config?.prospection?.invitations_per_day || 40,
+  const [localProspectsPerDay, setLocalProspectsPerDay] = useState(
+    campaign.config?.prospection?.prospects_per_day || 20,
   );
   const [localSearchTime, setLocalSearchTime] = useState(
     campaign.config?.prospection?.search_time || "09:00",
@@ -932,23 +1063,18 @@ function SettingsModal({
   const [localSelectedDays, setLocalSelectedDays] = useState<number[]>(
     campaign.config?.prospection?.selected_days || [1, 2, 3, 4, 5],
   );
-  const [localLanguage, setLocalLanguage] = useState(
-    campaign.config?.language || "français",
-  );
 
   const handleSave = async () => {
     setIsSaving(true);
     const { updateCampaignConfig } = await import("@/lib/flows/actions");
     const result = await updateCampaignConfig(campaign.id, {
       prospection: {
-        messages_per_day: localMessagesPerDay,
-        invitations_per_day: localInvitationsPerDay,
+        prospects_per_day: localProspectsPerDay,
         search_time: localSearchTime,
         end_time: localEndTime,
         timezone: localTimezone,
         selected_days: localSelectedDays,
       },
-      language: localLanguage,
     });
 
     if (result.success) {
@@ -1203,41 +1329,6 @@ function SettingsModal({
                             )}
                           </div>
                         </div>
-
-                        <div className="grid grid-cols-2 gap-6">
-                          <div className="space-y-4">
-                            <label className="text-xs text-white/30 uppercase tracking-wider font-medium">
-                              {tCS("messages_per_day")}
-                            </label>
-                            <div className="flex items-center gap-4 bg-white/5 border border-white/10 rounded-xl px-4 py-2">
-                              <button onClick={() => setLocalMessagesPerDay(Math.max(1, localMessagesPerDay - 1))} className="text-white/40 hover:text-white">-</button>
-                              <input
-                                type="number"
-                                value={localMessagesPerDay}
-                                onChange={(e) => setLocalMessagesPerDay(parseInt(e.target.value))}
-                                className="w-full bg-transparent text-center font-bold text-white border-none focus:ring-0"
-                              />
-                              <button onClick={() => setLocalMessagesPerDay(localMessagesPerDay + 1)} className="text-white/40 hover:text-white">+</button>
-                            </div>
-                          </div>
-
-                          <div className="space-y-4">
-                            <label className="text-xs text-white/30 uppercase tracking-wider font-medium">
-                              {tCS("invitations_per_day")}
-                            </label>
-                            <div className="flex items-center gap-4 bg-white/5 border border-white/10 rounded-xl px-4 py-2">
-                              <button onClick={() => setLocalInvitationsPerDay(Math.max(1, localInvitationsPerDay - 1))} className="text-white/40 hover:text-white">-</button>
-                              <input
-                                type="number"
-                                value={localInvitationsPerDay}
-                                onChange={(e) => setLocalInvitationsPerDay(parseInt(e.target.value))}
-                                className="w-full bg-transparent text-center font-bold text-white border-none focus:ring-0"
-                              />
-                              <button onClick={() => setLocalInvitationsPerDay(localInvitationsPerDay + 1)} className="text-white/40 hover:text-white">+</button>
-                            </div>
-                          </div>
-                        </div>
-
                         <div className="space-y-4">
                           <label className="text-xs text-white/30 uppercase tracking-wider font-medium">
                             {tCS("contact_hours")}
@@ -1285,20 +1376,6 @@ function SettingsModal({
                             <option value="Australia/Sydney">
                               Sydney (UTC+11:00)
                             </option>
-                          </select>
-                        </div>
-
-                        <div className="space-y-4">
-                          <label className="text-xs text-white/30 uppercase tracking-wider font-medium">
-                            {tCS("discussion_language")}
-                          </label>
-                          <select
-                            value={localLanguage}
-                            onChange={(e) => setLocalLanguage(e.target.value)}
-                            className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-blue-500/50"
-                          >
-                            <option value="français">Français</option>
-                            <option value="english">English</option>
                           </select>
                         </div>
                       </div>
@@ -1397,9 +1474,13 @@ function SettingsModal({
   );
 }
 
+// ============================================================================
+// MAIN DASHBOARD COMPONENT
+// ============================================================================
 
+import { useTranslations } from "next-intl";
 
-export function CampaignDashboardView({
+export function FullContactsView({
   campaign,
   prospects: initialProspects,
   activities,

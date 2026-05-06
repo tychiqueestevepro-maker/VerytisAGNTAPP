@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { useTranslations } from "next-intl";
 import {
   connectExtensionIntegration,
   disconnectExtensionIntegration,
@@ -10,6 +11,7 @@ import {
 
 export function ExtensionConnectButton({ clientId, clientName, isConnected }: { clientId: string, clientName: string, isConnected: boolean }) {
   const router = useRouter();
+  const t = useTranslations("Extension");
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState(isConnected ? "connecte" : "en_attente");
   const [isHovering, setIsHovering] = useState(false);
@@ -34,7 +36,7 @@ export function ExtensionConnectButton({ clientId, clientName, isConnected }: { 
 
     const res = await connectExtensionIntegration(clientId);
     if (!res.success || !res.extensionToken) {
-      alert(res.error || "Erreur lors de l'enregistrement en base de données.");
+      alert(res.error || t("save_error"));
       setLoading(false);
       return;
     }
@@ -44,7 +46,7 @@ export function ExtensionConnectButton({ clientId, clientName, isConnected }: { 
     const timeout = setTimeout(() => {
       if (completed) return;
       linkedinWindow?.focus();
-      alert("Connexion LinkedIn non terminée. Connecte-toi dans l'onglet LinkedIn ouvert, puis reviens ici et relance la connexion.");
+      alert(t("timeout_alert"));
       setStatus("en_attente");
       setLoading(false);
       router.refresh();
@@ -73,7 +75,7 @@ export function ExtensionConnectButton({ clientId, clientName, isConnected }: { 
           completeConnection();
         } else {
           console.warn("[integrations] extension connection failed or cancelled:", event.data.error);
-          alert(event.data.error || "Connexion LinkedIn cloud impossible.");
+          alert(event.data.error || t("cloud_error"));
           setStatus("en_attente");
           setLoading(false);
           router.refresh();
@@ -114,11 +116,11 @@ export function ExtensionConnectButton({ clientId, clientName, isConnected }: { 
         router.refresh();
       } else {
         console.warn("[integrations] disconnect failed:", res.error);
-        alert(res.error || "Erreur lors de la déconnexion.");
+        alert(res.error || t("disconnect_error"));
       }
     } catch (err) {
       console.error("[integrations] disconnect unexpected error:", err);
-      alert("Une erreur inattendue est survenue.");
+      alert(t("unexpected_error"));
     } finally {
       setLoading(false);
     }
@@ -129,7 +131,7 @@ export function ExtensionConnectButton({ clientId, clientName, isConnected }: { 
       <div className="space-y-2 mt-4">
         {clientName && (
           <p className="text-[10px] text-white/30 uppercase tracking-widest text-center">
-            Connecté en tant que <span className="text-green-400/60">{clientName}</span>
+            {t("connected_as")} <span className="text-green-400/60">{clientName}</span>
           </p>
         )}
         <button
@@ -145,7 +147,7 @@ export function ExtensionConnectButton({ clientId, clientName, isConnected }: { 
               : "bg-[#1a2e1f] text-green-400 border-green-900/50"
           }`}
         >
-          {loading ? "Déconnexion..." : isHovering ? "Déconnecter" : "Connecté"}
+          {loading ? t("disconnecting") : isHovering ? t("disconnect_label") : t("connected_label")}
         </button>
       </div>
     );
@@ -158,7 +160,7 @@ export function ExtensionConnectButton({ clientId, clientName, isConnected }: { 
       disabled={loading}
       className="px-4 py-2 bg-white text-black hover:bg-gray-200 rounded-md text-sm font-medium transition-colors w-full mt-4"
     >
-      {loading ? "Connexion en cours..." : "Connecter LinkedIn"}
+      {loading ? t("connecting") : t("connect_linkedin")}
     </button>
   );
 }

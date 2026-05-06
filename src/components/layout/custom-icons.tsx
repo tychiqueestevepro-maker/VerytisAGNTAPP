@@ -6,7 +6,7 @@ const base = {
   viewBox: "0 0 24 24",
   fill: "none",
   stroke: "currentColor",
-  strokeWidth: 1.45,
+  strokeWidth: 1.3,
   strokeLinecap: "round" as const,
   strokeLinejoin: "round" as const,
 };
@@ -38,33 +38,39 @@ export function DashboardIcon(props: IconProps) {
   );
 }
 
-export function ActivityIcon(props: IconProps) {
-  return (
-    <svg {...base} {...props}>
-      <path d="M4 13.2h3.1l2.1-6.4 4 10.7 2.1-4.3H20" />
-      <path d="M18.6 5.8 20 4.4" />
-    </svg>
-  );
-}
 
 export function AgentIcon(props: IconProps) {
   return (
     <svg {...base} {...props}>
-      <path d="M7.2 8.2 12 5.4l4.8 2.8v5.6L12 16.6l-4.8-2.8Z" />
-      <path d="M12 16.6v3.2" />
-      <path d="M8.5 20h7" />
-      <path d="M9.8 11h.1M14.1 11h.1" />
+      <path d="M12 2L4.5 9L12 16L19.5 9L12 2Z" />
+      <path d="M12 16V22" />
+      <path d="M8 22H16" />
+      <circle cx="12" cy="9" r="2" />
+    </svg>
+  );
+}
+
+export function ReportIcon(props: IconProps) {
+  return (
+    <svg {...base} {...props}>
+      <path d="M3 3v18h18" />
+      <path d="M7 16V10" />
+      <path d="M11 16V6" />
+      <path d="M15 16V12" />
+      <path d="M19 16V8" />
     </svg>
   );
 }
 
 export function DocumentIcon(props: IconProps) {
+
   return (
     <svg {...base} {...props}>
-      <path d="M7 4.8h6.5L17 8.4v10.8H7Z" />
-      <path d="M13.5 4.8v3.7H17" />
-      <path d="M9.4 12.3h4.8" />
-      <path d="M9.4 15.5h3.1" />
+      <path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z" />
+      <polyline points="14 2 14 8 20 8" />
+      <line x1="16" y1="13" x2="8" y2="13" />
+      <line x1="16" y1="17" x2="8" y2="17" />
+      <line x1="10" y1="9" x2="8" y2="9" />
     </svg>
   );
 }
@@ -72,11 +78,10 @@ export function DocumentIcon(props: IconProps) {
 export function IntegrationIcon(props: IconProps) {
   return (
     <svg {...base} {...props}>
-      <path d="M8 7.2h3.8v3.8H8Z" />
-      <path d="M14.2 13h3.8v3.8h-3.8Z" />
-      <path d="M11.8 9.1h2.4" />
-      <path d="M12 15h2.2" />
-      <path d="M6.2 15H4.5V5.5h9.7" />
+      <path d="M15 7h3a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2h-3" />
+      <path d="M9 17H6a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2h3" />
+      <path d="M7 12h10" />
+      <path d="m13 8 4 4-4 4" />
     </svg>
   );
 }
@@ -84,12 +89,8 @@ export function IntegrationIcon(props: IconProps) {
 export function SettingsIcon(props: IconProps) {
   return (
     <svg {...base} {...props}>
-      <path d="M12 8.2v-3" />
-      <path d="M12 18.8v-3" />
-      <path d="M8.2 12h-3" />
-      <path d="M18.8 12h-3" />
-      <circle cx="12" cy="12" r="3.8" />
-      <path d="m16.1 7.9 1.5-1.5M6.4 17.6l1.5-1.5" />
+      <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
+      <circle cx="12" cy="12" r="3" />
     </svg>
   );
 }
@@ -97,9 +98,30 @@ export function SettingsIcon(props: IconProps) {
 export function HelpIcon(props: IconProps) {
   return (
     <svg {...base} {...props}>
-      <path d="M7.3 8.2c.8-2 2.5-3.2 4.8-3.2 2.7 0 4.7 1.7 4.7 4.1 0 2.7-2.4 3.6-3.8 4.8-.7.6-1 1.1-1 2.1" />
-      <path d="M12 19.2h.1" />
-      <path d="M4.8 16.8c-1-1.4-1.4-3-1.4-4.8 0-4.8 3.8-8.6 8.6-8.6" />
+      <circle cx="12" cy="12" r="10" />
+      <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
+      <line x1="12" y1="17" x2="12.01" y2="17" />
+    </svg>
+  );
+}
+
+export function ActivityIcon(props: IconProps) {
+  return (
+    <svg {...base} {...props}>
+      <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
+    </svg>
+  );
+}
+
+export function LinkedinIcon(props: IconProps) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="currentColor"
+      xmlns="http://www.w3.org/2000/svg"
+      {...props}
+    >
+      <path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433c-1.144 0-2.063-.926-2.063-2.065 0-1.138.92-2.063 2.063-2.063 1.14 0 2.064.925 2.064 2.063 0 1.139-.925 2.065-2.064 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z" />
     </svg>
   );
 }

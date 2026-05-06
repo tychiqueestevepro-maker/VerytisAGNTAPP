@@ -293,6 +293,7 @@ Règles :
 - Si l'ancienneté, une prise de poste, une évolution interne ou une expérience passée intéressante est disponible, ajoute-la dans personalization_hooks.
 - N'invente aucune information absente.
 - Si les données sont insuffisantes, mets medium ou low et explique-le.
+- **Langue** : Tu DOIS impérativement rédiger qualification_reason et personalization_hooks en ${(campaignInput.config as any)?.language || 'français'}.
 `.trim();
 
   const openai = new OpenAI({ apiKey });

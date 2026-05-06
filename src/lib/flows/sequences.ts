@@ -41,6 +41,7 @@ RÈGLES D'OR DE L'OUTREACH HUMAIN & IMPACTANT :
 4. **Comportement Humain** : Simule un vrai parcours (Visite -> Attente -> Invitation -> Message).
 5. **Relances à valeur ajoutée** : Ne jamais faire de "simple relance". Chaque message doit apporter un nouvel angle, une preuve sociale ou une ressource utile.
 6. **Ton Premium** : Le ton "${campaign.tone || 'Professionnel'}" doit transparaître sans paraître forcé.
+7. **Langue** : Tu DOIS impérativement rédiger TOUS les messages et noms d'étapes en ${campaign.config?.language || 'français'}.
 
 STRUCTURE DU JSON RÉCURSIF :
 Tu DOIS répondre avec un objet JSON respectant cette structure, en supportant les branchements (OUI/NON) :

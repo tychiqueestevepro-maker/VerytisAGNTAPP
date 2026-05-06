@@ -4,8 +4,10 @@ import { TopLine } from "@/components/layout/top-line";
 import { ExtensionConnectButton } from "@/components/integrations/extension-connect-button";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getDefaultClientId } from "@/lib/actions/integrations";
+import { getTranslations } from "next-intl/server";
 
 export default async function IntegrationsPage() {
+  const t = await getTranslations("Integrations");
   const supabase = await createSupabaseServerClient();
   const clientId = await getDefaultClientId();
 
@@ -45,7 +47,7 @@ export default async function IntegrationsPage() {
   return (
     <>
       <TopLine />
-      <SectionHeading>Intégrations</SectionHeading>
+      <SectionHeading>{t("title")}</SectionHeading>
 
       <div className="mt-8 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
 
@@ -63,10 +65,10 @@ export default async function IntegrationsPage() {
             <div className="space-y-2">
               <div className="flex items-center gap-2">
                 <div className="w-5 h-5 rounded-full bg-white/5 border border-white/10 flex items-center justify-center text-[10px] text-white/40">1</div>
-                <p className="text-sm font-medium text-white/80">Installer l&apos;extension</p>
+                <p className="text-sm font-medium text-white/80">{t("step_install")}</p>
               </div>
               <p className="text-xs text-white/40 ml-7">
-                Nécessaire pour connecter LinkedIn, importer les profils et activer le runner cloud.
+                {t("step_install_desc")}
               </p>
               <a
                 href="https://chrome.google.com/webstore/detail/verytis"
@@ -74,7 +76,7 @@ export default async function IntegrationsPage() {
                 rel="noopener noreferrer"
                 className="ml-7 inline-flex items-center text-xs text-blue-400 hover:text-blue-300 transition-colors gap-1"
               >
-                Télécharger sur le Chrome Web Store
+                {t("download_chrome")}
                 <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
                 </svg>
@@ -85,10 +87,10 @@ export default async function IntegrationsPage() {
             <div className="space-y-2">
               <div className="flex items-center gap-2">
                 <div className="w-5 h-5 rounded-full bg-white/5 border border-white/10 flex items-center justify-center text-[10px] text-white/40">2</div>
-                <p className="text-sm font-medium text-white/80">Lier votre compte</p>
+                <p className="text-sm font-medium text-white/80">{t("step_link")}</p>
               </div>
               <p className="text-xs text-white/40 ml-7">
-                Connecte l&apos;extension et autorise le runner cloud à exécuter les séquences.
+                {t("step_link_desc")}
               </p>
 
               {clientId && (

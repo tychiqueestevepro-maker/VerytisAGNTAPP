@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { useTranslations } from "next-intl";
 
 const LinkedinIcon = (props: any) => (
   <svg
@@ -82,21 +83,43 @@ export const CONDITIONS = [
   "SI doublon détecté",
 ];
 
-const STEP_DESCRIPTIONS: Record<string, string> = {
-  "Voir profil": "Visite du profil des prospects pour signaler votre intérêt.",
-  "Ajouter sans message":
-    "Envoi d'une invitation LinkedIn sans note d'accompagnement.",
-  "Ajouter avec message":
-    "Envoi d'une invitation personnalisée avec un message d'introduction.",
-  "Envoyer message":
-    "Envoi d'un message direct aux prospects avec qui vous êtes déjà en relation.",
-  "Relance message":
-    "Envoi d'un message de suivi automatique si aucune réponse n'est reçue.",
-  "Créer action extension":
-    "Action manuelle à effectuer via l'extension navigateur.",
-  condition:
-    "Vérification d'une condition spécifique pour orienter la suite du flux.",
-  wait: "Attente programmée avant de passer à l'étape suivante.",
+const getStepDescriptions = (t: any) => ({
+  "Voir profil": t("descriptions.view_profile"),
+  "Ajouter sans message": t("descriptions.add_no_msg"),
+  "Ajouter avec message": t("descriptions.add_with_msg"),
+  "Envoyer message": t("descriptions.send_msg"),
+  "Relance message": t("descriptions.follow_up_msg"),
+  "Créer action extension": t("descriptions.create_ext_action"),
+  "Attendre X jours": t("descriptions.wait"),
+  "Attendre une réponse": t("descriptions.wait"),
+  condition: t("descriptions.condition"),
+  wait: t("descriptions.wait"),
+});
+
+const getActionLabel = (name: string, t: any) => {
+  const mapping: Record<string, string> = {
+    "Voir profil": t("nodes.view_profile"),
+    "Ajouter sans message": t("nodes.add_no_msg"),
+    "Ajouter avec message": t("nodes.add_with_msg"),
+    "Envoyer message": t("nodes.send_msg"),
+    "Relance message": t("nodes.follow_up_msg"),
+    "Créer action extension": t("nodes.create_ext_action"),
+    "Attendre X jours": t("nodes.wait_x_days"),
+    "Attendre une réponse": t("nodes.wait_reply"),
+    "Stopper la séquence": t("nodes.stop_sequence"),
+    "Passer en suivi manuel": t("nodes.manual_followup"),
+    "Marquer comme chaud": t("nodes.mark_hot"),
+    "Réessayer": t("nodes.retry"),
+    "Signaler erreur": t("nodes.report_error"),
+  };
+
+  // Handle dynamic "Attendre 1 jours" or similar from database
+  if (name.toLowerCase().includes("attendre") && (name.toLowerCase().includes("jour") || name.toLowerCase().includes("day"))) {
+    const days = name.match(/\d+/)?.[0] || "1";
+    return t("nodes.wait_x_days").replace("X", days);
+  }
+
+  return mapping[name] || name;
 };
 
 export const VARIABLES = [
@@ -258,6 +281,9 @@ export function SequenceBuilderModal({
   stepCounts = {},
   completedCount = 0,
 }: SequenceBuilderProps) {
+  const t = useTranslations("Cockpit");
+  const tSB = useTranslations("SequenceBuilder");
+  const STEP_DESCRIPTIONS = getStepDescriptions(t);
   const [steps, setSteps] = useState<StepNode[]>(() => {
     if (initialSteps && initialSteps.length > 0) {
       return recursiveMapSteps(initialSteps);
@@ -327,18 +353,22 @@ export function SequenceBuilderModal({
 
   const formatConditionLabel = (label: string, prospect: any) => {
     const name = prospect
-      ? prospect.decision_maker?.split(" ")[0] || "le prospect"
-      : "le prospect";
+      ? prospect.decision_maker?.split(" ")[0] || (tSB("select_prospect").toLowerCase())
+      : (tSB("select_prospect").toLowerCase());
 
     const linkedinLabel = prospect ? name : "prospect LinkedIn";
 
-    // Normalize and personalize technical labels
-    return label
-      .replace(/SI linkedin_url existe/i, `LinkedIn de ${linkedinLabel}`)
-      .replace(/SI invitation acceptée/i, `Si ${name} a accepté l'invitation`)
-      .replace(/SI réponse reçue/i, `Si ${name} a répondu`)
-      .replace(/SI le prospect a répondu/i, `Si ${name} a répondu`)
-      .replace(/le prospect/i, name);
+    // Normalize and personalize technical labels using translations
+    let formatted = label;
+    if (label.toLowerCase().includes("linkedin_url")) {
+      formatted = tSB("condition_linkedin_url", { name: linkedinLabel });
+    } else if (label.toLowerCase().includes("invitation")) {
+      formatted = tSB("condition_invitation_accepted", { name });
+    } else if (label.toLowerCase().includes("réponse") || label.toLowerCase().includes("reponse")) {
+      formatted = tSB("condition_reply_received", { name });
+    }
+
+    return formatted;
   };
 
 
@@ -362,9 +392,9 @@ export function SequenceBuilderModal({
 
   const getStepDescription = (node: StepNode) => {
     if (node.type === "wait") {
-      return `Attente de ${node.config.days || 1} jour(s) après l'étape précédente.`;
+      return tSB("wait_n_days", { n: node.config.days || 1 });
     }
-    return STEP_DESCRIPTIONS[node.name] || STEP_DESCRIPTIONS[node.type] || "";
+    return (STEP_DESCRIPTIONS as any)[node.name] || (STEP_DESCRIPTIONS as any)[node.type] || "";
   };
 
   // Flatten tree to find step
@@ -665,7 +695,7 @@ export function SequenceBuilderModal({
                       : "text-white/30 hover:text-white hover:bg-white/5"
                   }`}
                 >
-                  Structure Globale
+                  {tSB("global_structure")}
                 </button>
                 <div className="w-px h-5 bg-white/10 mx-1" />
                 <div className="relative group">
@@ -679,7 +709,7 @@ export function SequenceBuilderModal({
                     <Users className="size-3.5" />
                     {selectedProspect
                       ? selectedProspect.decision_maker
-                      : "Personnalisation Prospect"}
+                      : tSB("prospect_personalization")}
                     <ChevronDown className="size-3.5 opacity-40 group-hover:opacity-100 transition-opacity" />
                   </button>
 
@@ -687,7 +717,7 @@ export function SequenceBuilderModal({
                   <div className="absolute top-full left-0 mt-3 w-72 bg-[#0A0A0A] border border-white/10 rounded-2xl shadow-[0_30px_60px_rgba(0,0,0,0.8)] opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-300 z-50 overflow-hidden translate-y-2 group-hover:translate-y-0">
                     <div className="p-4 border-b border-white/5 bg-white/[0.02]">
                       <p className="text-[10px] font-bold text-white/30 uppercase tracking-[0.2em]">
-                        Sélectionner un prospect
+                        {tSB("select_prospect")}
                       </p>
                     </div>
                     <div className="max-h-[400px] overflow-y-auto p-2 scrollbar-hide">
@@ -735,8 +765,8 @@ export function SequenceBuilderModal({
                         : "bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]"
                     }`}
                   />
-                  Mode :{" "}
-                  {selectedProspect ? "Aperçu Prospect" : "Édition Campagne"}
+                  {tSB("mode")} :{" "}
+                  {selectedProspect ? tSB("mode_preview") : tSB("mode_edit")}
                 </div>
               </div>
             </div>
@@ -748,7 +778,7 @@ export function SequenceBuilderModal({
                   size="sm"
                   className="bg-white text-black hover:bg-white/90 text-xs font-bold gap-2"
                 >
-                  <Save className="size-3.5" /> Enregistrer
+                  <Save className="size-3.5" /> {t("save")}
                 </Button>
               </div>
 
@@ -773,7 +803,7 @@ export function SequenceBuilderModal({
 
             <div className="min-w-max min-h-full p-20 flex flex-col items-center">
               <div className="mb-6 px-4 py-2 rounded-full text-xs font-bold text-white/60 bg-white/5 border border-white/10 shadow-lg">
-                Début de séquence
+                {tSB("start_sequence")}
               </div>
 
               <SequenceTree
@@ -794,7 +824,7 @@ export function SequenceBuilderModal({
                 <div className="px-8 py-4 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 flex flex-col items-center gap-1 shadow-[0_0_30px_rgba(16,185,129,0.1)]">
                   <CheckCircle2 className="size-6 text-emerald-400 mb-1" />
                   <span className="text-[11px] font-black text-emerald-400 uppercase tracking-[0.2em]">
-                    Terminés
+                    {tSB("completed")}
                   </span>
                   <span className="text-3xl font-bold text-white">
                     {completedCount}
@@ -838,8 +868,8 @@ export function SequenceBuilderModal({
                     </h3>
                     <p className="text-[10px] text-white/30 uppercase tracking-[0.15em] font-black mt-0.5">
                       {editingStep.type === "condition"
-                        ? "Condition"
-                        : "Action"}
+                        ? tSB("condition")
+                        : tSB("action")}
                     </p>
                   </div>
                 </div>
@@ -861,7 +891,7 @@ export function SequenceBuilderModal({
                 {editingStep.type === "condition" ? (
                   <div className="space-y-4">
                     <label className="text-xs text-white/50 uppercase tracking-widest font-bold">
-                      Choix de la condition
+                      {tSB("choose_condition")}
                     </label>
                     <select
                       value={editingStep.name}
@@ -884,7 +914,7 @@ export function SequenceBuilderModal({
                 ) : editingStep.type === "wait" ? (
                   <div className="space-y-4">
                     <label className="text-xs text-white/50 uppercase tracking-widest font-bold">
-                      Nombre de jours
+                      {tSB("days_number")}
                     </label>
                     <input
                       type="number"
@@ -905,7 +935,7 @@ export function SequenceBuilderModal({
                   <>
                     <div className="space-y-2">
                       <label className="text-xs text-white/50 uppercase tracking-widest font-bold">
-                        Action
+                      {tSB("action")}
                       </label>
                       <p className="text-sm font-medium text-white">
                         {editingStep.name}{" "}
@@ -920,19 +950,17 @@ export function SequenceBuilderModal({
                               <div className="flex items-center justify-between">
                                 <div className="flex flex-col gap-1">
                                   <label className="text-xs text-blue-400 uppercase tracking-widest font-bold">
-                                    Message Individuel
+                                    {tSB("individual_message")}
                                   </label>
                                   {prospectOverrides[selectedProspect.id]?.[
                                     editingStep.id
                                   ] ? (
                                     <div className="flex items-center gap-1.5 text-[9px] text-blue-400/60 font-bold uppercase">
-                                      <CheckCircle2 className="size-2.5" /> IA
-                                      Personnalisé / Édité
+                                      {tSB("ai_personalized")}
                                     </div>
                                   ) : (
                                     <div className="flex items-center gap-1.5 text-[9px] text-white/30 font-bold uppercase">
-                                      <AlertCircle className="size-2.5" />{" "}
-                                      Utilise le modèle générique
+                                      {tSB("use_generic")}
                                     </div>
                                   )}
                                 </div>
@@ -949,16 +977,15 @@ export function SequenceBuilderModal({
                                           // Trigger individual qualification/personalization
                                           // For now, let's just simulate or call an action
                                           alert(
-                                            "Génération de la personnalisation IA en cours...",
+                                            tSB("generating_ai"),
                                           );
                                         }}
                                       >
-                                        <Zap className="size-3 mr-1" /> Générer
-                                        IA
+                                        <Zap className="size-3 mr-1" /> {tSB("generate_ai")}
                                       </Button>
                                     )}
                                   <span className="text-[10px] bg-blue-500/10 text-blue-400 px-2 py-0.5 rounded border border-blue-500/20 font-bold">
-                                    PRIORITAIRE
+                                    {tSB("priority")}
                                   </span>
                                 </div>
                               </div>
@@ -983,22 +1010,20 @@ export function SequenceBuilderModal({
                                   }))
                                 }
                                 className="w-full bg-blue-500/5 border border-blue-500/20 rounded-lg px-4 py-3 text-sm text-white focus:outline-none focus:border-blue-500/40 resize-none font-sans shadow-[0_0_15px_rgba(59,130,246,0.1)]"
-                                placeholder={`Adaptez le message spécifiquement pour ${selectedProspect.decision_maker.split(" ")[0]}...`}
+                                placeholder={tSB("generic_placeholder")}
                               />
                               <p className="text-[10px] text-blue-400/60 italic">
-                                Ce texte est prioritaire et sera envoyé à ce
-                                prospect. Si vide, le modèle global sera
-                                utilisé.
+                                {tSB("priority_desc")}
                               </p>
                             </div>
 
                             <div className="pt-6 border-t border-white/5 space-y-3 opacity-40 hover:opacity-100 transition-opacity group">
                               <div className="flex items-center justify-between">
                                 <label className="text-xs text-white/40 uppercase tracking-widest font-bold group-hover:text-white/60">
-                                  Modèle Global (Campagne entière)
+                                  {tSB("global_model")}
                                 </label>
                                 <span className="text-[9px] text-white/20 font-bold uppercase">
-                                  Fallback
+                                  {tSB("fallback")}
                                 </span>
                               </div>
                               <textarea
@@ -1042,7 +1067,7 @@ export function SequenceBuilderModal({
                             <div className="space-y-2">
                               <div className="flex items-center justify-between">
                                 <label className="text-xs text-white/50 uppercase tracking-widest font-bold">
-                                  Modèle de message (Campagne entière)
+                                  {tSB("global_model")}
                                 </label>
                               </div>
                               <textarea
@@ -1104,7 +1129,7 @@ export function SequenceBuilderModal({
                   onClick={() => setIsReplacePickerOpen(true)}
                   className="text-white/70 hover:text-white hover:bg-white/10 gap-2"
                 >
-                  <RefreshCw className="size-4" /> Remplacer
+                  <RefreshCw className="size-4" /> {tSB("replace")}
                 </Button>
                 <Button
                   variant="ghost"
@@ -1114,7 +1139,7 @@ export function SequenceBuilderModal({
                   }}
                   className="text-red-400 hover:text-red-300 hover:bg-red-500/10 gap-2"
                 >
-                  <Trash2 className="size-4" /> Supprimer
+                  <Trash2 className="size-4" /> {tSB("delete")}
                 </Button>
               </div>
             </motion.div>
@@ -1154,6 +1179,7 @@ function SequenceTree({
   branchOwnerId?: string;
   branchType?: "yes" | "no";
 }) {
+  const tSB = useTranslations("SequenceBuilder");
   return (
     <div className="flex flex-col items-center gap-6">
       {nodes.map((node, index) => (
@@ -1182,7 +1208,7 @@ function SequenceTree({
 
                 <div className="flex-1 flex flex-col items-center pt-6 px-4">
                   <div className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/20 text-emerald-400 mb-6 border border-emerald-500/30">
-                    OUI
+                    {tSB("yes")}
                   </div>
                   <SequenceTree
                     nodes={node.config.yesBranch || []}
@@ -1200,7 +1226,7 @@ function SequenceTree({
                 </div>
                 <div className="flex-1 flex flex-col items-center pt-6 px-4">
                   <div className="px-2 py-0.5 rounded text-[10px] font-bold bg-red-500/20 text-red-400 mb-6 border border-red-500/30">
-                    NON
+                    {tSB("no")}
                   </div>
                   <SequenceTree
                     nodes={node.config.noBranch || []}
@@ -1290,13 +1316,15 @@ function NodeCard({
   formatConditionLabel?: (label: string, prospect: any) => string;
   count?: number;
 }) {
+  const t = useTranslations("Cockpit");
+  const tSB = useTranslations("SequenceBuilder");
   const Icon = getIconForType(node.type, node.channel);
   const color = getColorForType(node.type, node.channel);
 
   const displayName =
     node.type === "condition" && formatConditionLabel
       ? formatConditionLabel(node.name, selectedProspect)
-      : node.name;
+      : getActionLabel(node.name, t);
 
   return (
     <div
@@ -1314,9 +1342,9 @@ function NodeCard({
           <div className="flex items-center justify-between mb-1">
             <div className="flex items-center gap-2">
               {stepNumber && (
-                <span className="text-[10px] font-bold bg-white/10 text-white/70 px-1.5 py-0.5 rounded uppercase">
-                  Step {stepNumber}
-                </span>
+                  <span className="text-[10px] font-bold bg-white/10 text-white/70 px-1.5 py-0.5 rounded uppercase">
+                    {tSB("step_n", { n: stepNumber })}
+                  </span>
               )}
               <p className="text-sm font-bold text-white leading-tight truncate">
                 {displayName}
@@ -1338,7 +1366,7 @@ function NodeCard({
           )}
           {node.config.days && (
             <p className="text-xs text-white/50 mt-1 flex items-center gap-1.5">
-              <Clock className="size-3" /> {node.config.days} jour(s)
+              <Clock className="size-3" /> {tSB("wait_n_days", { n: node.config.days })}
             </p>
           )}
         </div>
@@ -1366,6 +1394,8 @@ function ActionPickerModal({
   onSelect: (action: ActionDefinition) => void;
   onClose: () => void;
 }) {
+  const t = useTranslations("Cockpit");
+  const tSB = useTranslations("SequenceBuilder");
   const { suggestions, otherActions } = getActionSuggestions(previousStep);
 
   const renderAction = (
@@ -1389,7 +1419,7 @@ function ActionPickerModal({
         >
           <Icon className="size-3.5" />
         </div>
-        {action.name}
+        {getActionLabel(action.name, t)}
       </button>
     );
   };
@@ -1413,10 +1443,10 @@ function ActionPickerModal({
         <div className="flex items-center justify-between border-b border-white/10 px-4 py-3 bg-white/[0.03]">
           <div>
             <p className="text-sm font-bold text-white">
-              Remplacer l&apos;étape
+              {tSB("replace_step")}
             </p>
             <p className="text-[10px] uppercase tracking-[0.18em] text-white/35">
-              Propositions
+              {tSB("suggestions")}
             </p>
           </div>
           <button
@@ -1429,7 +1459,7 @@ function ActionPickerModal({
 
         <div className="max-h-[calc(72vh-64px)] overflow-y-auto py-2">
           <div className="px-3 py-1 text-[10px] font-bold text-emerald-400 uppercase tracking-widest bg-emerald-500/5">
-            Suggestions
+            {tSB("suggestions")}
           </div>
           {suggestions.map((action) => renderAction(action))}
 
@@ -1445,7 +1475,7 @@ function ActionPickerModal({
 
           <div className="border-t border-white/10 my-1" />
           <div className="px-3 py-1 text-[10px] font-bold text-white/40 uppercase tracking-widest bg-white/5">
-            Autres actions
+            {tSB("other_actions")}
           </div>
           {otherActions.map((action) =>
             renderAction(
@@ -1466,6 +1496,8 @@ function AddNodeButton({
   onClick: (step: StepNode) => void;
   previousStep?: StepNode;
 }) {
+  const t = useTranslations("Cockpit");
+  const tSB = useTranslations("SequenceBuilder");
   const [isOpen, setIsOpen] = useState(false);
   const { suggestions, otherActions } = getActionSuggestions(previousStep);
 
@@ -1505,7 +1537,7 @@ function AddNodeButton({
       {isOpen && (
         <div className="absolute top-full mt-2 w-64 bg-[#0A0A0A] border border-white/10 rounded-xl shadow-2xl overflow-y-auto max-h-[400px] py-2 z-50">
           <div className="px-3 py-1 text-[10px] font-bold text-emerald-400 uppercase tracking-widest bg-emerald-500/5">
-            Suggestions
+            {tSB("suggestions")}
           </div>
           {suggestions.map((a) => {
             const Icon = getIconForType(a.type, a.channel);
@@ -1530,7 +1562,7 @@ function AddNodeButton({
                 >
                   <Icon className="size-3.5" />
                 </div>
-                {a.name}
+                {getActionLabel(a.name, t)}
               </button>
             );
           })}
@@ -1551,11 +1583,11 @@ function AddNodeButton({
             <div className="p-1.5 rounded-lg border border-purple-500/20 bg-purple-500/10 group-hover:scale-110 transition-transform">
               <GitBranch className="size-3.5" />
             </div>
-            Condition SI/SINON
+            {tSB("condition_if_else")}
           </button>
           <div className="border-t border-white/10 my-1" />
           <div className="px-3 py-1 text-[10px] font-bold text-white/40 uppercase tracking-widest bg-white/5">
-            Autres actions
+            {tSB("other_actions")}
           </div>
           {otherActions.map((a) => {
             const Icon = getIconForType(a.type, a.channel);
@@ -1580,7 +1612,7 @@ function AddNodeButton({
                 >
                   <Icon className="size-3.5" />
                 </div>
-                {a.name}
+                {getActionLabel(a.name, t)}
               </button>
             );
           })}

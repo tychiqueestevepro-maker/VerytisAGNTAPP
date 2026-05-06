@@ -50,7 +50,8 @@ CONSIGNES :
 2. Utilise les hooks fournis pour injecter de la preuve de recherche et de l'empathie.
 3. Respecte scrupuleusement le ton "${campaign.tone}".
 4. Ne modifie pas l'ordre des étapes.
-5. Réponds uniquement en JSON valide.
+5. **Langue** : Tu DOIS impérativement rédiger TOUS les messages en ${campaign.config?.language || 'français'}.
+6. Réponds uniquement en JSON valide.
 `.trim();
 
   const userPrompt = `

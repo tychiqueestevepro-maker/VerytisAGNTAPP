@@ -4,6 +4,7 @@ import { getUserWithProfile } from "@/lib/auth";
 import { getCampaignDetail } from "@/lib/flows/actions";
 import { TopLine } from "@/components/layout/top-line";
 import { CampaignDashboardView } from "@/components/flows/campaign-dashboard-view";
+import { getTranslations } from "next-intl/server";
 
 interface ActivityLog {
   id: string;
@@ -40,6 +41,7 @@ export async function generateMetadata({ params }: Props) {
 export default async function CampaignDetailPage({ params }: Props) {
   const { id } = await params;
   const user = await getUserWithProfile();
+  const tAct = await getTranslations("Activities");
 
   if (!user?.profile?.client_id) notFound();
 
@@ -215,16 +217,16 @@ export default async function CampaignDetailPage({ params }: Props) {
 
       if (act.action.includes("imported")) {
         const sourceStr = act.action.includes("extension")
-          ? "via extension"
-          : "via document";
-        if (last.count === 2)
-          last.action = `Profils importés ${sourceStr} : ${name1} & ${name2}`;
-        else
-          last.action = `${name1}, ${name2} + ${last.count - 2} importés ${sourceStr}`;
-        last.detail = `${last.count} contacts ajoutés à la campagne.`;
+          ? "extension"
+          : "document";
+        
+        const names = `${name1}${name2 ? ` & ${name2}` : ""}${last.count > 2 ? ` + ${last.count - 2}` : ""}`;
+        
+        last.action = tAct("profiles_imported_via", { source: sourceStr, names });
+        last.detail = tAct("contacts_added_count", { count: last.count });
       } else if (act.action.includes("deleted")) {
-        last.action = `${last.count} contacts supprimés`;
-        last.detail = "Les contacts ont été retirés de la campagne.";
+        last.action = tAct("n_contacts_deleted", { count: last.count });
+        last.detail = tAct("contacts_removed");
       }
     } else {
       let actionLabel = act.action;
@@ -233,11 +235,11 @@ export default async function CampaignDetailPage({ params }: Props) {
 
       // Manual User Actions Mapping
       if (act.action === "prospect.imported.extension") {
-        actionLabel = `Profil importé via extension : ${prospectName}${companySuffix}`;
-        detail = "Le profil LinkedIn a été ajouté à la campagne.";
+        actionLabel = tAct("imported_via_extension", { name: `${prospectName}${companySuffix}` });
+        detail = tAct("profile_added");
       } else if (act.action === "prospect.imported.document") {
-        actionLabel = `Profil importé via document : ${prospectName}${companySuffix}`;
-        detail = "Le contact a été ajouté depuis un fichier importé.";
+        actionLabel = tAct("imported_via_document", { name: `${prospectName}${companySuffix}` });
+        detail = tAct("contact_added_from_file");
       } else if (act.action === "prospect.qualified") {
         const level = metadata.qualification_level
           ? `ICP ${metadata.qualification_level}`
@@ -245,20 +247,20 @@ export default async function CampaignDetailPage({ params }: Props) {
         const scoreStr = metadata.fit_score
           ? ` (Score ICP: ${metadata.fit_score}/100)`
           : "";
-        actionLabel = `Qualification effectuée pour ${prospectName}${companySuffix}`;
-        detail = `Résultat : ${level}${scoreStr}.`;
+        actionLabel = tAct("qualification_done_for", { name: `${prospectName}${companySuffix}` });
+        detail = tAct("qualification_result", { level, scoreStr });
       } else if (act.action === "prospect.sequence.confirmed") {
-        actionLabel = `Séquence confirmée pour ${prospectName}${companySuffix}`;
-        detail = `${metadata.extension_actions_created || 0} action(s) LinkedIn ajoutée(s) à la file.`;
+        actionLabel = tAct("sequence_confirmed_for", { name: `${prospectName}${companySuffix}` });
+        detail = tAct("linkedin_actions_added", { count: metadata.extension_actions_created || 0 });
       } else if (act.action === "prospect.sequence.paused") {
-        actionLabel = `Séquence mise en pause pour ${prospectName}${companySuffix}`;
-        detail = `${metadata.cancelled_actions || 0} action(s) en attente annulée(s).`;
+        actionLabel = tAct("sequence_paused_for", { name: `${prospectName}${companySuffix}` });
+        detail = tAct("pending_actions_cancelled", { count: metadata.cancelled_actions || 0 });
       } else if (act.action === "prospect.sequence.removed") {
-        actionLabel = `Prospect retiré de la campagne : ${prospectName}`;
-        detail = `${metadata.cancelled_actions || 0} action(s) en attente annulée(s).`;
+        actionLabel = tAct("prospect_removed_name", { name: prospectName });
+        detail = tAct("pending_actions_cancelled", { count: metadata.cancelled_actions || 0 });
       } else if (act.action === "prospect.deleted") {
-        actionLabel = `Contact supprimé : ${prospectName}`;
-        detail = "Le contact a été retiré de la campagne.";
+        actionLabel = tAct("contact_deleted_name", { name: prospectName });
+        detail = tAct("prospect_removed_from_campaign");
       }
       // Agent Task Actions Mapping
       else if (act.action.startsWith("task.")) {
@@ -270,19 +272,19 @@ export default async function CampaignDetailPage({ params }: Props) {
 
         if (act.action.endsWith(".completed")) {
           if (runType === "enrichment") {
-            actionLabel = `L'agent ${agentName} a enrichi ${prospectName}${companySuffix}`;
-            detail = "Données de profil complétées avec succès.";
+            actionLabel = tAct("agent_enriched", { agent: agentName, name: `${prospectName}${companySuffix}` });
+            detail = tAct("enrichment_success");
           } else if (runType === "qualifier") {
-            actionLabel = `L'agent ${agentName} a qualifié ${prospectName}${companySuffix}`;
-            detail = "Analyse de correspondance ICP terminée.";
+            actionLabel = tAct("agent_qualified", { agent: agentName, name: `${prospectName}${companySuffix}` });
+            detail = tAct("qualification_success");
           } else {
-            actionLabel = `L'agent ${agentName} a terminé l'étape ${runType}`;
-            detail = `Action effectuée en ${metadata.duration_ms || "?"}ms.`;
+            actionLabel = tAct("agent_finished_step", { agent: agentName, step: runType });
+            detail = tAct("step_completed_duration", { duration: metadata.duration_ms || "?" });
           }
         } else if (act.action.endsWith(".failed")) {
-          actionLabel = `Échec de l'étape ${runType} pour ${prospectName}`;
+          actionLabel = tAct("step_failed_for", { step: runType, name: prospectName });
           detail =
-            metadata.error || "Une erreur est survenue lors du traitement.";
+            metadata.error || tAct("processing_error");
         } else {
           // Skip started logs to avoid clutter, unless specifically needed
           continue;
