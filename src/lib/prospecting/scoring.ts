@@ -1,3 +1,8 @@
+import {
+  normalizeProspectionPlaybook,
+  type ProspectionPlaybook,
+} from "@/lib/prospecting/playbook";
+
 export type PreScoreLevel = "high" | "medium" | "low";
 
 type UnknownRecord = Record<string, unknown>;
@@ -12,6 +17,9 @@ export interface PreScoreResult {
     company: boolean;
     url: boolean;
     targetDescriptionOverlap: boolean;
+    playbookRules: boolean;
+    prioritySignals: boolean;
+    exclusions: boolean;
   };
 }
 
@@ -26,6 +34,7 @@ export interface NormalizedCampaignCriteria {
   targetCompanySize: string[];
   tone: string;
   source: string;
+  prospectionPlaybook: ProspectionPlaybook;
 }
 
 export interface NormalizedProspectData {
@@ -163,6 +172,16 @@ export function normalizeCampaignCriteria(campaign: UnknownRecord | null | undef
     ...toArray(targetIcp.company_size),
     ...toArray(targetIcp.company_sizes),
   ]);
+  const playbook = normalizeProspectionPlaybook(config.prospection_playbook, {
+    goal: pickString(campaign?.objective, config.objective, config.offer),
+    offer: pickString(campaign?.target_description, config.target_description, config.offer, campaign?.description),
+    tone: pickString(campaign?.tone, config.tone),
+    roles: targetRoles,
+    industries: targetIndustries,
+    companySizes: targetCompanySize,
+    locations: targetLocations,
+    exclusions: toArray(config.exclude_keywords),
+  });
 
   return {
     id: pickString(campaign?.id) || undefined,
@@ -175,6 +194,7 @@ export function normalizeCampaignCriteria(campaign: UnknownRecord | null | undef
     targetCompanySize,
     tone: pickString(campaign?.tone, config.tone, "Professionnel et direct"),
     source: pickString(campaign?.source, config.source, toArray(config.sources)[0], "linkedin"),
+    prospectionPlaybook: playbook,
   };
 }
 
@@ -315,6 +335,7 @@ function hasMeaningfulOverlap(text: string, reference: string, minimumMatches = 
 export function preScoreProspect(prospectInput: UnknownRecord, campaignInput: UnknownRecord | null | undefined): PreScoreResult {
   const prospect = normalizeProspectData(prospectInput);
   const campaign = normalizeCampaignCriteria(campaignInput);
+  const playbook = campaign.prospectionPlaybook;
 
   const roleText = [prospect.roleTitle, prospect.rawText].join(" ");
   const industryText = [
@@ -350,13 +371,31 @@ export function preScoreProspect(prospectInput: UnknownRecord, campaignInput: Un
 
   const hasCompany = Boolean(prospect.companyName);
   const hasUrl = Boolean(prospect.profileUrl || prospect.websiteUrl);
+  const playbookText = fullProspectText;
+  const playbookRuleMatches = playbook.qualification_rules.filter((rule) =>
+    matchesAnyCriterion(playbookText, [rule.name, rule.description, ...(Array.isArray(rule.keywords) ? rule.keywords : [])])
+  );
+  const priorityRuleMatches = playbook.priority_rules.filter((rule) =>
+    matchesAnyCriterion(playbookText, [rule.name, rule.description, ...(Array.isArray(rule.keywords) ? rule.keywords : [])])
+  );
+  const exclusionKeywords = unique(playbook.exclusion_rules.flatMap((rule) => [
+    rule.name,
+    rule.description,
+    ...(Array.isArray(rule.keywords) ? rule.keywords : []),
+  ]));
+  const exclusionMatches = exclusionKeywords.length > 0
+    ? matchesAnyCriterion(playbookText, exclusionKeywords)
+    : false;
+  const playbookScore = Math.min(15, playbookRuleMatches.reduce((sum, rule) => sum + Math.min(8, Number(rule.weight || 0)), 0));
+  const priorityScore = Math.min(10, priorityRuleMatches.reduce((sum, rule) => sum + Math.min(5, Number(rule.weight || 0)), 0));
 
-  const score =
+  const baseScore =
     (roleMatches ? 30 : 0) +
     (industryMatches ? 25 : 0) +
     (locationMatches ? 20 : 0) +
     (hasCompany ? 15 : 0) +
     (hasUrl ? 10 : 0);
+  const score = Math.max(0, Math.min(100, baseScore + playbookScore + priorityScore - (exclusionMatches ? 40 : 0)));
 
   return {
     score,
@@ -368,6 +407,9 @@ export function preScoreProspect(prospectInput: UnknownRecord, campaignInput: Un
       company: hasCompany,
       url: hasUrl,
       targetDescriptionOverlap,
+      playbookRules: playbookRuleMatches.length > 0,
+      prioritySignals: priorityRuleMatches.length > 0,
+      exclusions: exclusionMatches,
     },
   };
 }

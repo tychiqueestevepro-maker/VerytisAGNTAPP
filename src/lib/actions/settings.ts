@@ -4,6 +4,11 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getUserWithProfile } from "@/lib/auth";
 import { SettingsForm } from "@/lib/schemas/settings";
 import { revalidatePath } from "next/cache";
+import {
+  linesToRules,
+  normalizeProspectionPlaybook,
+  rulesToLines,
+} from "@/lib/prospecting/playbook";
 
 export async function getSettings(): Promise<{ data: SettingsForm | null; error: string | null }> {
   const user = await getUserWithProfile();
@@ -31,6 +36,15 @@ export async function getSettings(): Promise<{ data: SettingsForm | null; error:
     .maybeSingle();
 
   if (configError) return { data: null, error: "Erreur lors du chargement de la configuration" };
+  const playbook = normalizeProspectionPlaybook(
+    config?.extra_config?.prospection_playbook_defaults ??
+    config?.extra_config?.prospection_playbook,
+    {
+      goal: config?.offer_type || "",
+      tone: config?.tone || "",
+      exclusions: config?.excluded_sectors || [],
+    },
+  );
 
   const settings: SettingsForm = {
     first_name: user.profile.first_name || "",
@@ -47,6 +61,17 @@ export async function getSettings(): Promise<{ data: SettingsForm | null; error:
     message_style: config?.message_style || "",
     excluded_sectors: config?.excluded_sectors || [],
     required_fields: config?.required_fields || [],
+    prospection_playbook_goal: playbook.goal,
+    prospection_playbook_method: playbook.method,
+    prospection_qualification_rules: rulesToLines(playbook.qualification_rules),
+    prospection_priority_rules: rulesToLines(playbook.priority_rules),
+    prospection_exclusion_rules: rulesToLines(playbook.exclusion_rules),
+    prospection_message_angle: playbook.message_strategy.angle,
+    prospection_require_human_review: playbook.validation_policy.require_human_validation,
+    prospection_auto_accept_above: playbook.validation_policy.auto_accept_above,
+    prospection_review_min: playbook.validation_policy.human_review_between[0],
+    prospection_review_max: playbook.validation_policy.human_review_between[1],
+    prospection_reject_below: playbook.validation_policy.reject_below,
     daily_cost_limit: 0,
     daily_prospect_limit: 0,
     daily_message_limit: 0,
@@ -141,6 +166,27 @@ export async function updateSettings(data: SettingsForm) {
   const newExtraConfig = {
     ...(currentConfig?.extra_config || {}),
     openai_api_key: data.openai_api_key,
+    prospection_playbook_defaults: normalizeProspectionPlaybook({
+      goal: data.prospection_playbook_goal,
+      method: data.prospection_playbook_method,
+      qualification_rules: linesToRules(data.prospection_qualification_rules || "", 25),
+      priority_rules: linesToRules(data.prospection_priority_rules || "", 20),
+      exclusion_rules: linesToRules(data.prospection_exclusion_rules || "", 50),
+      validation_policy: {
+        auto_accept_above: data.prospection_auto_accept_above,
+        human_review_between: [data.prospection_review_min, data.prospection_review_max],
+        reject_below: data.prospection_reject_below,
+        require_human_validation: data.prospection_require_human_review,
+      },
+      message_strategy: {
+        angle: data.prospection_message_angle,
+      },
+    }, {
+      goal: data.prospection_playbook_goal || data.offer_type,
+      offer: data.offer_type,
+      tone: data.tone,
+      exclusions: data.excluded_sectors,
+    }),
   };
 
   const { error: configError } = await supabase

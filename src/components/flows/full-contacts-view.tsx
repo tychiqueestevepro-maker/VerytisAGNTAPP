@@ -25,6 +25,7 @@ import {
   Edit2,
   Settings,
   Loader2,
+  Brain,
   Upload,
   Trash2,
   Trash,
@@ -67,6 +68,11 @@ import { SequenceBuilderModal } from "./sequence-builder";
 import { TopLine } from "@/components/layout/top-line";
 import { SectionHeading } from "@/components/layout/section-heading";
 import { cn } from "@/lib/utils";
+import {
+  linesToRules,
+  normalizeProspectionPlaybook,
+  rulesToLines,
+} from "@/lib/prospecting/playbook";
 
 const fade = {
   initial: { opacity: 0, y: 12 },
@@ -1031,6 +1037,32 @@ function FlowCanvasModal({
   );
 }
 
+function SettingsTextarea({
+  label,
+  value,
+  onChange,
+  rows = 4,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  rows?: number;
+}) {
+  return (
+    <div className="space-y-2">
+      <label className="text-xs text-white/30 uppercase tracking-wider font-medium">
+        {label}
+      </label>
+      <textarea
+        rows={rows}
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-blue-500/50 resize-none leading-relaxed"
+      />
+    </div>
+  );
+}
+
 function SettingsModal({
   onClose,
   campaignName,
@@ -1044,9 +1076,18 @@ function SettingsModal({
   const tCS = useTranslations("CampaignSettings");
   const tAct = useTranslations("Activities");
   const router = useRouter();
-  const [activeTab, setActiveTab] = useState<"config" | "contact">("contact");
+  const [activeTab, setActiveTab] = useState<"config" | "playbook" | "contact">("contact");
   const [isSaving, setIsSaving] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+  const currentPlaybook = normalizeProspectionPlaybook(campaign.config?.prospection_playbook, {
+    goal: (campaign as any).objective || campaign.config?.offer || campaign.config?.target_description,
+    offer: campaign.config?.offer || (campaign as any).target_description,
+    tone: campaign.config?.tone,
+    roles: campaign.config?.personas || [],
+    industries: campaign.config?.target_icp?.industries || campaign.config?.target_icp?.sectors || [],
+    companySizes: campaign.config?.target_icp?.company_size || campaign.config?.target_icp?.company_sizes || [],
+    locations: campaign.config?.target_icp?.locations || campaign.config?.target_icp?.geographies || [],
+  });
 
   const [localProspectsPerDay, setLocalProspectsPerDay] = useState(
     campaign.config?.prospection?.prospects_per_day || 20,
@@ -1063,6 +1104,13 @@ function SettingsModal({
   const [localSelectedDays, setLocalSelectedDays] = useState<number[]>(
     campaign.config?.prospection?.selected_days || [1, 2, 3, 4, 5],
   );
+  const [localPlaybookGoal, setLocalPlaybookGoal] = useState(currentPlaybook.goal);
+  const [localPlaybookMethod, setLocalPlaybookMethod] = useState(currentPlaybook.method);
+  const [localQualificationRules, setLocalQualificationRules] = useState(rulesToLines(currentPlaybook.qualification_rules));
+  const [localPriorityRules, setLocalPriorityRules] = useState(rulesToLines(currentPlaybook.priority_rules));
+  const [localExclusionRules, setLocalExclusionRules] = useState(rulesToLines(currentPlaybook.exclusion_rules));
+  const [localMessageAngle, setLocalMessageAngle] = useState(currentPlaybook.message_strategy.angle);
+  const [localHumanReview, setLocalHumanReview] = useState(currentPlaybook.validation_policy.require_human_validation);
 
   const handleSave = async () => {
     setIsSaving(true);
@@ -1075,6 +1123,26 @@ function SettingsModal({
         timezone: localTimezone,
         selected_days: localSelectedDays,
       },
+      prospection_playbook: normalizeProspectionPlaybook({
+        ...currentPlaybook,
+        goal: localPlaybookGoal,
+        method: localPlaybookMethod,
+        qualification_rules: linesToRules(localQualificationRules, 25),
+        priority_rules: linesToRules(localPriorityRules, 20),
+        exclusion_rules: linesToRules(localExclusionRules, 50),
+        validation_policy: {
+          ...currentPlaybook.validation_policy,
+          require_human_validation: localHumanReview,
+        },
+        message_strategy: {
+          ...currentPlaybook.message_strategy,
+          angle: localMessageAngle,
+        },
+      }, {
+        goal: localPlaybookGoal,
+        offer: campaign.config?.offer,
+        tone: campaign.config?.tone,
+      }),
     });
 
     if (result.success) {
@@ -1138,6 +1206,7 @@ function SettingsModal({
           <div className="w-64 border-r border-white/10 bg-[#070707] p-4 flex flex-col gap-2 shrink-0">
             {[
               { id: "config", label: tCS("tab_config"), icon: Edit2 },
+              { id: "playbook", label: tCS("tab_playbook"), icon: Brain },
               { id: "contact", label: tCS("tab_contact"), icon: Zap },
             ].map((tab) => (
               <button
@@ -1259,6 +1328,89 @@ function SettingsModal({
                           {campaign.config?.tone || "Professionnel"}
                         </p>
                       </div>
+                    </div>
+                  </section>
+                </motion.div>
+              )}
+
+              {activeTab === "playbook" && (
+                <motion.div
+                  key="playbook"
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -10 }}
+                  className="space-y-8"
+                >
+                  <section className="space-y-6">
+                    <h3 className="text-xs font-bold text-white/40 uppercase tracking-[0.2em] flex items-center gap-2">
+                      <span className="size-1.5 rounded-full bg-violet-400" />{" "}
+                      {tCS("tab_playbook")}
+                    </h3>
+
+                    <div className="grid gap-5 p-6 rounded-2xl bg-white/[0.02] border border-white/5">
+                      <div className="space-y-2">
+                        <label className="text-xs text-white/30 uppercase tracking-wider font-medium">
+                          {tCS("playbook_goal")}
+                        </label>
+                        <input
+                          value={localPlaybookGoal}
+                          onChange={(e) => setLocalPlaybookGoal(e.target.value)}
+                          className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-blue-500/50"
+                        />
+                      </div>
+
+                      <SettingsTextarea
+                        label={tCS("playbook_method")}
+                        value={localPlaybookMethod}
+                        onChange={setLocalPlaybookMethod}
+                        rows={3}
+                      />
+
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <SettingsTextarea
+                          label={tCS("qualification_rules")}
+                          value={localQualificationRules}
+                          onChange={setLocalQualificationRules}
+                          rows={7}
+                        />
+                        <SettingsTextarea
+                          label={tCS("priority_rules")}
+                          value={localPriorityRules}
+                          onChange={setLocalPriorityRules}
+                          rows={7}
+                        />
+                        <SettingsTextarea
+                          label={tCS("exclusion_rules")}
+                          value={localExclusionRules}
+                          onChange={setLocalExclusionRules}
+                          rows={7}
+                        />
+                      </div>
+
+                      <SettingsTextarea
+                        label={tCS("message_angle")}
+                        value={localMessageAngle}
+                        onChange={setLocalMessageAngle}
+                        rows={3}
+                      />
+
+                      <button
+                        type="button"
+                        onClick={() => setLocalHumanReview(!localHumanReview)}
+                        className={cn(
+                          "p-4 rounded-xl border text-left transition-all",
+                          localHumanReview
+                            ? "bg-white/[0.08] border-white/20"
+                            : "bg-white/[0.02] border-white/5",
+                        )}
+                      >
+                        <p className="text-sm font-bold text-white mb-1">
+                          {tCS("require_human_review")}
+                        </p>
+                        <p className="text-xs text-white/35 leading-relaxed">
+                          {tCS("require_human_review_desc")}
+                        </p>
+                      </button>
                     </div>
                   </section>
                 </motion.div>

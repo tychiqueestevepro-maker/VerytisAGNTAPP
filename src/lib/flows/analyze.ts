@@ -43,7 +43,13 @@ JSON strict uniquement
   "icp_roles": ["Titre 1", "Titre 2", "Titre 3"],
   "locations": ["Pays 1", "Pays 2"],
   "sources": ["LinkedIn", "Site web"],
-  "tone": "ton choisi"
+  "tone": "ton choisi",
+  "playbook": {
+    "qualification": ["Règle de filtrage 1", "Règle de filtrage 2"],
+    "priority": ["Signal de personnalisation/actualité 1", "Signal 2"],
+    "exclusion": ["Segment à écarter 1", "Segment 2"],
+    "angle": "Ton angle d'approche stratégique"
+  }
 }
 
 RÈGLE DE LANGUE:
@@ -140,6 +146,12 @@ export interface AnalysisResult {
   locations: string[];
   sources: string[];
   tone: string;
+  playbook?: {
+    qualification: string[];
+    priority: string[];
+    exclusion: string[];
+    angle: string;
+  };
 }
 
 export async function analyzeWebsite(url: string, language: string = "français"): Promise<{ data: AnalysisResult | null; error: string | null }> {

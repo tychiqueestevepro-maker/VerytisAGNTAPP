@@ -4,7 +4,8 @@ import { CampaignsListView } from "@/components/flows/campaigns-list-view";
 import { createProspectingCampaign } from "@/lib/flows/actions";
 import { getTranslations } from "next-intl/server";
 
-export async function generateMetadata({ params: { locale } }: { params: { locale: string } }) {
+export async function generateMetadata({ params }: { params: Promise<{ locale: string }> }) {
+  const { locale } = await params;
   const t = await getTranslations({ locale, namespace: "Prospecting" });
   return {
     title: t("page_title"),

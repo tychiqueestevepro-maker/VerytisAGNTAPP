@@ -1,6 +1,7 @@
 import OpenAI from "openai";
 import { z } from "zod";
 import { getOpenAIKeyForClient } from "./qualification";
+import { normalizeProspectionPlaybook } from "./playbook";
 
 const PersonalizedStepSchema = z.object({
   step_id: z.string(),
@@ -22,6 +23,14 @@ export async function personalizeSequenceForProspect(
 ): Promise<PersonalizedSequence> {
   const apiKey = await getOpenAIKeyForClient(prospect.client_id || campaign.client_id);
   const openai = new OpenAI({ apiKey });
+  const playbook = normalizeProspectionPlaybook(campaign.config?.prospection_playbook, {
+    goal: campaign.objective,
+    offer: campaign.target_description || campaign.config?.offer,
+    tone: campaign.tone || campaign.config?.tone,
+    roles: campaign.target_roles || campaign.config?.personas,
+    industries: campaign.target_industries || campaign.config?.target_icp?.industries,
+    locations: campaign.target_locations || campaign.config?.target_icp?.locations,
+  });
 
   const systemPrompt = `
 Tu es un expert en copywriting et psychologie de l'outreach B2B de haut niveau.
@@ -44,14 +53,16 @@ DONNÉES DU PROSPECT :
 CAMPAGNE :
 - Objectif : ${campaign.objective}
 - Ton : ${campaign.tone}
+- Playbook métier : ${JSON.stringify(playbook, null, 2)}
 
 CONSIGNES :
 1. Pour chaque étape de type 'linkedin' (ou action de message), génère un message entièrement personnalisé.
 2. Utilise les hooks fournis pour injecter de la preuve de recherche et de l'empathie.
 3. Respecte scrupuleusement le ton "${campaign.tone}".
-4. Ne modifie pas l'ordre des étapes.
-5. **Langue** : Tu DOIS impérativement rédiger TOUS les messages en ${campaign.config?.language || 'français'}.
-6. Réponds uniquement en JSON valide.
+4. Respecte l'angle, le CTA et les interdits du playbook métier.
+5. Ne modifie pas l'ordre des étapes.
+6. **Langue** : Tu DOIS impérativement rédiger TOUS les messages en ${campaign.config?.language || 'français'}.
+7. Réponds uniquement en JSON valide.
 `.trim();
 
   const userPrompt = `

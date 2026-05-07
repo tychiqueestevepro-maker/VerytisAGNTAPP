@@ -24,6 +24,10 @@ import {
 import { generateSequenceForCampaign } from "./sequences";
 import { personalizeSequenceForProspect } from "@/lib/prospecting/personalization";
 import { enqueueExtensionActionsForQualifiedProspect } from "@/lib/extension/sequence-runner";
+import {
+  normalizeProspectionPlaybook,
+  type ProspectionPlaybook,
+} from "@/lib/prospecting/playbook";
 
 type ProspectingCampaignConfig = {
   target_icp?: {
@@ -42,6 +46,7 @@ type ProspectingCampaignConfig = {
   target_description?: string;
   prospection?: {
     mode?: string;
+    prospects_per_day?: number;
     messages_per_day?: number;
     invitations_per_day?: number;
     search_time?: string;
@@ -57,6 +62,7 @@ type ProspectingCampaignConfig = {
     ignore_duplicates?: boolean;
     prioritize_linkedin?: boolean;
   };
+  prospection_playbook?: Partial<ProspectionPlaybook>;
   language?: "français" | "english";
   [key: string]: unknown;
 };
@@ -241,6 +247,24 @@ export async function updateCampaignConfig(
     },
   };
 
+  if (config.prospection_playbook) {
+    merged.prospection_playbook = normalizeProspectionPlaybook(
+      {
+        ...(current.config?.prospection_playbook ?? {}),
+        ...config.prospection_playbook,
+      },
+      {
+        goal: String(config.objective || current.config?.offer || current.config?.target_description || ""),
+        offer: String(current.config?.offer || current.config?.target_description || ""),
+        tone: String(current.config?.tone || ""),
+        roles: current.config?.personas || [],
+        industries: current.config?.target_icp?.industries || current.config?.target_icp?.sectors || [],
+        companySizes: current.config?.target_icp?.company_size || current.config?.target_icp?.company_sizes || [],
+        locations: current.config?.target_icp?.locations || current.config?.target_icp?.geographies || [],
+      },
+    );
+  }
+
   const updatePayload: Record<string, any> = { config: merged };
   if (config.display_name) updatePayload.display_name = config.display_name;
   if (config.objective) updatePayload.objective = config.objective;
@@ -299,12 +323,19 @@ export async function createProspectingCampaign(
 
   if (!flow) return { data: null, error: "Flux parent introuvable" };
 
-  const defaultConfig: ProspectingCampaignConfig = {
+  const { data: clientConfig } = await supabase
+    .from("client_configs")
+    .select("extra_config")
+    .eq("client_id", user.profile.client_id)
+    .maybeSingle();
+
+  const baseConfig: ProspectingCampaignConfig = {
     target_icp: { sectors: [], company_size: [], locations: [] },
     personas: [],
     tone: "",
     prospection: {
       mode: "auto",
+      prospects_per_day: 17,
       messages_per_day: 7,
       invitations_per_day: 10,
       search_time: "09:00",
@@ -321,6 +352,23 @@ export async function createProspectingCampaign(
     },
     language: "français",
     ...initialConfig,
+  };
+  const defaultConfig: ProspectingCampaignConfig = {
+    ...baseConfig,
+    prospection_playbook: normalizeProspectionPlaybook(
+      baseConfig.prospection_playbook ??
+      clientConfig?.extra_config?.prospection_playbook_defaults ??
+      clientConfig?.extra_config?.prospection_playbook,
+      {
+        goal: baseConfig.offer || baseConfig.target_description || displayName,
+        offer: baseConfig.offer || baseConfig.target_description,
+        tone: baseConfig.tone,
+        roles: baseConfig.personas || [],
+        industries: baseConfig.target_icp?.industries || baseConfig.target_icp?.sectors || [],
+        companySizes: baseConfig.target_icp?.company_size || baseConfig.target_icp?.company_sizes || [],
+        locations: baseConfig.target_icp?.locations || baseConfig.target_icp?.geographies || [],
+      },
+    ),
   };
 
   const { data: campaign, error } = await supabase
@@ -743,6 +791,8 @@ async function qualifyProspectRecord(
         qualification: {
           result: qualification,
           personalization_hooks: qualification.personalization_hooks,
+          recent_serp_sources: qualification.recent_serp_sources || [],
+          recent_serp_context: qualification.recent_serp_context || null,
           qualified_at: new Date().toISOString(),
         },
         sequence_decision: {

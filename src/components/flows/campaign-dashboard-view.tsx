@@ -7,6 +7,7 @@ import {
   Play,
   Pause,
   ChevronDown,
+  Briefcase,
   Search,
   MessageSquare,
   Clock,
@@ -49,6 +50,7 @@ import {
   ArrowRightLeft,
   CopyPlus,
   XCircle,
+  Sparkles,
 } from "lucide-react";
 import {
   getOrganizationProspects,
@@ -175,6 +177,7 @@ interface ActivityLog {
   detail?: string;
   photos?: string[];
   count?: number;
+  metadata?: any;
 }
 
 interface ExtensionOverview {
@@ -207,12 +210,7 @@ const LinkedinIcon = (props: any) => (
 );
 
 // --- Helpers ---
-const STATUS_LABEL: Record<string, string> = {
-  active: "Actif",
-  paused: "En pause",
-  archived: "Archivé",
-  draft: "Brouillon",
-};
+// Helpers moved to component for translation support
 
 const StatusDot = ({ status }: { status: string }) => {
   if (status === "active")
@@ -349,6 +347,7 @@ function SequenceDecisionControls({
   compact?: boolean;
   className?: string;
 }) {
+  const t = useTranslations("Cockpit");
   const decision = getSequenceDecision(prospect);
   const isQualified = isProspectQualificationDone(prospect);
   const isDisabled = !isQualified || isLoading;
@@ -362,21 +361,21 @@ function SequenceDecisionControls({
   }> = [
     {
       decision: "confirmed",
-      label: "Confirmer la séquence",
+      label: t("confirm_sequence"),
       icon: CheckCircle2,
       activeClass: "bg-emerald-500/15 text-emerald-300 border-emerald-500/30",
       hoverClass: "hover:bg-emerald-500/10 hover:text-emerald-300",
     },
     {
       decision: "paused",
-      label: "Mettre la suite en pause",
+      label: t("pause_sequence"),
       icon: Pause,
       activeClass: "bg-amber-500/15 text-amber-300 border-amber-500/30",
       hoverClass: "hover:bg-amber-500/10 hover:text-amber-300",
     },
     {
       decision: "removed",
-      label: "Enlever de la campagne",
+      label: t("remove_from_campaign_action"),
       icon: XCircle,
       activeClass: "bg-red-500/15 text-red-300 border-red-500/30",
       hoverClass: "hover:bg-red-500/10 hover:text-red-300",
@@ -422,10 +421,10 @@ function SequenceDecisionControls({
               <span className="flex items-center gap-2 text-[11px] font-bold">
                 <Icon className="size-3.5" />
                 {action.decision === "confirmed"
-                  ? "Confirmer"
+                  ? t("confirm_sequence")
                   : action.decision === "paused"
-                    ? "Pause"
-                    : "Enlever"}
+                    ? t("pause_sequence")
+                    : t("remove_from_campaign_action")}
               </span>
             )}
           </button>
@@ -530,6 +529,24 @@ const getProspectCompanyDescription = (prospect: Prospect) => {
     prospect.raw_data?.organizationDescription,
     organization.description,
     organization.mission,
+  );
+};
+
+const getProspectExperience = (prospect: Prospect) => {
+  const rawExp = prospect.raw_data?.experience || prospect.extra_data?.experience;
+  if (Array.isArray(rawExp) && rawExp.length > 0) {
+    // Format the first 2 experiences
+    return rawExp.slice(0, 2).map((exp: any) => {
+      const title = exp.title || exp.role;
+      const comp = exp.company || exp.companyName;
+      if (title && comp) return `${title} @ ${comp}`;
+      return title || comp;
+    }).join(" / ");
+  }
+  return firstText(
+    prospect.extra_data?.last_experience,
+    prospect.raw_data?.headline,
+    prospect.raw_data?.summary
   );
 };
 
@@ -920,6 +937,9 @@ function SettingsModal({
   const [localInvitationsPerDay, setLocalInvitationsPerDay] = useState(
     campaign.config?.prospection?.invitations_per_day || 40,
   );
+  const [localProspectsPerDay, setLocalProspectsPerDay] = useState(
+    campaign.config?.prospection?.prospects_per_day || 20,
+  );
   const [localSearchTime, setLocalSearchTime] = useState(
     campaign.config?.prospection?.search_time || "09:00",
   );
@@ -941,6 +961,7 @@ function SettingsModal({
     const { updateCampaignConfig } = await import("@/lib/flows/actions");
     const result = await updateCampaignConfig(campaign.id, {
       prospection: {
+        prospects_per_day: localProspectsPerDay,
         messages_per_day: localMessagesPerDay,
         invitations_per_day: localInvitationsPerDay,
         search_time: localSearchTime,
@@ -1794,7 +1815,7 @@ campaign: Campaign;
 
   const handleDelete = async (ids: string[]) => {
     if (
-      !confirm(`Êtes-vous sûr de vouloir supprimer ${ids.length} contact(s) ?`)
+      !confirm(t("delete_confirm_bulk", { count: ids.length }))
     )
       return;
     setIsDeleting(true);
@@ -1876,7 +1897,7 @@ campaign: Campaign;
 
     if (
       decision === "removed" &&
-      !confirm("Enlever ce prospect de la campagne ?")
+      !confirm(t("remove_confirm"))
     ) {
       return;
     }
@@ -2530,7 +2551,7 @@ campaign: Campaign;
                         <div className="flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-white/5 border border-white/10 shrink-0">
                           <StatusDot status={campaign.status} />
                           <span className="text-[8px] text-white/40 uppercase font-bold tracking-wider">
-                            {STATUS_LABEL[campaign.status]}
+                            {t(`status_${campaign.status}` as any)}
                           </span>
                         </div>
                       </div>
@@ -2556,7 +2577,7 @@ campaign: Campaign;
                           : "text-white/40 hover:text-white",
                       )}
                     >
-                      Campagne
+                      {t("tab_campaign")}
                     </button>
                     <button
                       onClick={() => {
@@ -2570,7 +2591,7 @@ campaign: Campaign;
                           : "text-white/40 hover:text-white",
                       )}
                     >
-                      Listes
+                      {t("tab_lists")}
                     </button>
                     <button
                       onClick={() => {
@@ -2584,7 +2605,7 @@ campaign: Campaign;
                           : "text-white/40 hover:text-white",
                       )}
                     >
-                      Tous
+                      {t("tab_all")}
                     </button>
                   </div>
 
@@ -2640,7 +2661,7 @@ campaign: Campaign;
                       )}
                     >
                       <Filter className="size-3" />
-                      <span className="hidden md:inline">Filtres</span>
+                      <span className="hidden md:inline">{t("filters")}</span>
                     </Button>
 
                     <AnimatePresence>
@@ -2653,7 +2674,7 @@ campaign: Campaign;
                         >
                           <div className="flex items-center justify-between">
                             <h4 className="text-[10px] font-bold text-white/30 uppercase tracking-[0.2em]">
-                              Filtres Avancés
+                              {t("advanced_filters")}
                             </h4>
                             <button
                               onClick={() => {
@@ -2665,7 +2686,7 @@ campaign: Campaign;
                               }}
                               className="text-[10px] font-bold text-blue-400 hover:text-blue-300 uppercase tracking-wider"
                             >
-                              Réinitialiser
+                              {t("reset")}
                             </button>
                           </div>
 
@@ -2769,7 +2790,7 @@ campaign: Campaign;
                     }}
                   >
                     <Download className="size-3" />
-                    <span className="hidden md:inline">Exporter</span>
+                    <span className="hidden md:inline">{t("export")}</span>
                   </Button>
                   <div className="w-[1px] h-6 bg-[#1F1F1F] mx-1" />
                   <div className="relative">
@@ -2779,9 +2800,9 @@ campaign: Campaign;
                     >
                       <Zap className="size-3" />
                       <span className="hidden lg:inline">
-                        Ajouter des leads
+                        {t("add_leads")}
                       </span>
-                      <span className="lg:hidden">Ajouter</span>
+                      <span className="lg:hidden">{t("add_btn_short")}</span>
                       <ChevronDown
                         className={cn(
                           "size-3 transition-transform",
@@ -2801,7 +2822,7 @@ campaign: Campaign;
                           <div className="p-2">
                             <div className="px-3 py-2 mb-1 border-b border-white/5">
                               <span className="text-[9px] font-bold text-white/40 uppercase tracking-[0.2em]">
-                                Source de données
+                                {t("data_source")}
                               </span>
                             </div>
                             <button
@@ -2878,34 +2899,34 @@ campaign: Campaign;
                               className="size-4 rounded border-[#1F1F1F] bg-black/40 text-blue-500 focus:ring-blue-500/20 cursor-pointer"
                             />
                             <span className="text-[10px] font-bold text-white/20 uppercase tracking-[0.2em]">
-                              Prospects
+                              {t("contacts")}
                             </span>
                           </div>
 
                           <div className="flex items-center gap-8 shrink-0">
                             <div className="hidden lg:flex flex-col items-center w-20">
                               <span className="text-[10px] font-bold text-white/20 uppercase tracking-[0.2em]">
-                                Importé
+                                {t("imported_col")}
                               </span>
                             </div>
                             <div className="hidden md:flex flex-col items-center w-16">
                               <span className="text-[10px] font-bold text-white/20 uppercase tracking-[0.2em]">
-                                Step
+                                {t("step_col")}
                               </span>
                             </div>
                             <div className="hidden sm:flex flex-col items-center w-16">
                               <span className="text-[10px] font-bold text-white/20 uppercase tracking-[0.2em]">
-                                ICP
+                                {t("icp_col")}
                               </span>
                             </div>
                             <div className="hidden xl:flex flex-col items-center w-32">
                               <span className="text-[10px] font-bold text-white/20 uppercase tracking-[0.2em]">
-                                Suite
+                                {t("suite_col")}
                               </span>
                             </div>
                             <div className="w-9 flex justify-center">
                               <span className="text-[10px] font-bold text-white/20 uppercase tracking-[0.2em]">
-                                Actions
+                                {t("actions_col")}
                               </span>
                             </div>
                           </div>
@@ -2987,13 +3008,13 @@ campaign: Campaign;
                               <div className="flex items-center gap-8 shrink-0">
                                 <div className="hidden lg:flex flex-col items-center w-20">
                                   <p className="text-[10px] text-white/20 uppercase tracking-widest mb-1.5 font-bold">
-                                    Importé le
+                                    {t("imported_at")}
                                   </p>
                                   <span className="text-[11px] text-white/60 font-medium tracking-tight">
                                     {p.created_at
                                       ? new Date(
                                           p.created_at,
-                                        ).toLocaleDateString("fr-FR", {
+                                        ).toLocaleDateString(undefined, {
                                           day: "2-digit",
                                           month: "2-digit",
                                         })
@@ -3079,7 +3100,7 @@ campaign: Campaign;
                   <div className="w-full lg:w-[450px] xl:w-[500px] bg-[#080808] border-l border-[#1F1F1F] flex flex-col shrink-0">
                     <div className="p-6 border-b border-[#1F1F1F] flex items-center justify-between bg-[#080808] z-10 shrink-0">
                       <h3 className="text-xl font-bold tracking-tight">
-                        Détails Prospect
+                        {t("prospect_details")}
                       </h3>
                       <button
                         onClick={() => setSelectedProspect(null)}
@@ -3105,9 +3126,21 @@ campaign: Campaign;
                           )}
                         </div>
                         <div>
-                          <h2 className="text-2xl font-bold text-white tracking-tight">
-                            {selectedProspect.decision_maker || "Inconnu"}
-                          </h2>
+                          <div className="flex items-center justify-center gap-3">
+                            <h2 className="text-2xl font-bold text-white tracking-tight">
+                              {selectedProspect.decision_maker || t("unknown")}
+                            </h2>
+                            {(selectedProspect.linkedin_url || selectedProspect.profile_url) && (
+                              <a
+                                href={selectedProspect.linkedin_url || selectedProspect.profile_url || "#"}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="p-1.5 rounded-lg bg-[#0077b5]/10 text-[#0077b5] hover:bg-[#0077b5]/20 transition-all active:scale-90 flex-shrink-0"
+                              >
+                                <LinkedinIcon className="size-4" />
+                              </a>
+                            )}
+                          </div>
                           {(() => {
                             const { title, company } = getTitleAndCompany(
                               selectedProspect.role,
@@ -3129,7 +3162,7 @@ campaign: Campaign;
                         </div>
                       </div>
 
-                      <div className="grid grid-cols-2 gap-4">
+                      <div className="grid grid-cols-1">
                         <div className="p-5 rounded-xl bg-white/[0.03] border border-[#1F1F1F] flex flex-col items-center justify-center text-center">
                           <p className="text-[10px] text-white/20 uppercase tracking-[0.2em] font-bold mb-1.5">
                             ICP
@@ -3143,40 +3176,35 @@ campaign: Campaign;
                             {getIcpMeta(selectedProspect).label}
                           </span>
                         </div>
-                        <div className="p-5 rounded-xl bg-white/[0.03] border border-[#1F1F1F] flex flex-col items-center justify-center text-center">
-                          <p className="text-[10px] text-white/20 uppercase tracking-[0.2em] font-bold mb-1.5">
-                            Qualification finale
-                          </p>
-                          <span
-                            className={cn(
-                              "px-3 py-1.5 rounded-md text-[11px] font-bold border",
-                              getQualificationMeta(selectedProspect).className,
-                            )}
-                          >
-                            {getQualificationMeta(selectedProspect).label}
-                          </span>
-                        </div>
                       </div>
 
                       <div className="space-y-4">
                         <h4 className="text-[10px] font-bold text-white/20 uppercase tracking-[0.2em] flex items-center gap-2 px-1">
-                          <CheckCircle2 className="size-3" /> Qualification
+                          <CheckCircle2 className="size-3" /> {t("qualification")}
                         </h4>
                         <div className="p-6 rounded-xl bg-white/[0.03] border border-[#1F1F1F] space-y-5">
                           <div className="space-y-2">
                             <p className="text-[10px] text-white/20 uppercase tracking-widest font-bold">
                               {t("reason")}
                             </p>
-                            <p className="text-[13px] text-white/60 leading-relaxed">
-                              {selectedProspect.qualification_reason || t("no_llm_qualif")}
-                            </p>
+                            <div className="text-[13px] text-white/60 leading-relaxed space-y-2">
+                              {selectedProspect.qualification_reason &&
+                                selectedProspect.qualification_reason.split('\n').map((line, idx) => (
+                                  <p key={idx} className="flex gap-2">
+                                    <span className="text-blue-400 mt-1 shrink-0">•</span>
+                                    <span>{line.replace(/^[•\-\*]\s?/, '')}</span>
+                                  </p>
+                                ))
+                              }
+                            </div>
                           </div>
                         </div>
                       </div>
 
+                      {/* Suite de séquence section moved here */}
                       <div className="space-y-4">
                         <h4 className="text-[10px] font-bold text-white/20 uppercase tracking-[0.2em] flex items-center gap-2 px-1">
-                          <Send className="size-3" /> Suite de séquence
+                          <Send className="size-3" /> {t("sequence_suite")}
                         </h4>
                         <div className="p-5 rounded-xl bg-white/[0.03] border border-[#1F1F1F] space-y-4">
                           <div className="flex items-center justify-between gap-4">
@@ -3184,22 +3212,21 @@ campaign: Campaign;
                               <p className="text-[13px] font-medium text-white/70">
                                 {getSequenceDecision(selectedProspect) ===
                                 "confirmed"
-                                  ? "Séquence confirmée"
+                                  ? t("sequence_confirmed")
                                   : getSequenceDecision(selectedProspect) ===
                                       "paused"
-                                    ? "Séquence en pause"
+                                    ? t("sequence_paused")
                                     : getSequenceDecision(selectedProspect) ===
                                         "removed"
-                                      ? "Retiré de la campagne"
+                                      ? t("removed_from_campaign")
                                       : isProspectQualificationDone(
                                             selectedProspect,
                                           )
-                                        ? "En attente de décision"
-                                        : "Qualification requise"}
+                                        ? t("waiting_decision")
+                                        : t("qualification_required")}
                               </p>
                               <p className="text-[11px] text-white/30 mt-1">
-                                Confirmer lance la file, pause garde le contact,
-                                enlever le sort de cette campagne.
+                                {t("sequence_help_text")}
                               </p>
                             </div>
                           </div>
@@ -3214,82 +3241,85 @@ campaign: Campaign;
                         </div>
                       </div>
 
-                      {/* Personalized Sequence Section */}
-                      <div className="space-y-4">
-                        <div className="flex items-center justify-between px-1">
-                          <h4 className="text-[10px] font-bold text-white/20 uppercase tracking-[0.2em] flex items-center gap-2">
-                            <Zap className="size-3" /> Personalized Sequence
-                          </h4>
-                          {editingSequence && (
-                            <button
-                              onClick={handleSavePersonalization}
-                              className="text-[10px] font-bold text-blue-500 hover:text-blue-400 uppercase tracking-widest transition-colors flex items-center gap-1.5"
-                            >
-                              <Save className="size-3" /> Enregistrer
-                            </button>
-                          )}
-                        </div>
+                      {/* IA Insights section moved here */}
+                      {(() => {
+                        const qualResult = (selectedProspect.extra_data as any)?.qualification?.result;
+                        const insights = qualResult?.prospect_insights;
+                        if (!insights) return null;
 
-                        {editingSequence?.steps?.length > 0 ? (
-                          <div className="space-y-3">
-                            {editingSequence.steps.map(
-                              (step: any, i: number) => (
-                                <div
-                                  key={i}
-                                  className="p-4 rounded-xl bg-white/[0.03] border border-[#1F1F1F] space-y-3 group hover:border-blue-500/20 transition-all"
-                                >
-                                  <div className="flex items-center justify-between">
-                                    <p className="text-[10px] font-bold text-white/20 uppercase tracking-widest">
-                                      Step {i + 1} : {getActionLabel(step.name, t)}
-                                    </p>
-                                    {step.personalized_message && (
-                                      <span className="size-1.5 rounded-full bg-blue-500 shadow-[0_0_8px_rgba(59,130,246,0.3)]" />
-                                    )}
-                                  </div>
-                                  {step.personalized_message !== undefined ? (
-                                    <textarea
-                                      value={step.personalized_message}
-                                      onChange={(e) =>
-                                        handleUpdateSequenceStep(
-                                          i,
-                                          e.target.value,
-                                        )
-                                      }
-                                      className="w-full bg-black/40 border border-white/5 rounded-lg p-3 text-[13px] text-white/80 leading-relaxed focus:outline-none focus:border-blue-500/40 focus:bg-black/60 transition-all resize-none min-h-[100px] scrollbar-hide"
-                                      placeholder="Rédigez votre message personnalisé ici..."
-                                    />
-                                  ) : (
-                                    <div className="p-3 bg-white/[0.02] border border-dashed border-white/5 rounded-lg">
-                                      <p className="text-[11px] text-white/20 italic">
-                                        Action automatique sans message
-                                        personnalisé
-                                      </p>
-                                    </div>
-                                  )}
+                        return (
+                          <div className="space-y-4">
+                            <h4 className="text-[10px] font-bold text-blue-400 uppercase tracking-[0.2em] flex items-center gap-2 px-1">
+                              <Sparkles className="size-3" /> {t("ia_insights")}
+                            </h4>
+                            <div className="p-6 rounded-xl bg-blue-500/[0.02] border border-blue-500/10 space-y-6">
+                              {insights.career_context && (
+                                <div className="space-y-2">
+                                  <p className="text-[10px] text-white/20 uppercase tracking-widest font-bold">
+                                    {t("career_evolution")}
+                                  </p>
+                                  <p className="text-[13px] text-white/80 leading-relaxed italic">
+                                    "{insights.career_context}"
+                                  </p>
                                 </div>
-                              ),
-                            )}
+                              )}
+
+                              {insights.suggested_opening && (
+                                <div className="space-y-2">
+                                  <p className="text-[10px] text-white/20 uppercase tracking-widest font-bold">
+                                    {t("suggested_opening")}
+                                  </p>
+                                  <div className="p-4 rounded-lg bg-white/[0.02] border border-white/5">
+                                    <p className="text-[13px] text-blue-400/80 leading-relaxed font-medium">
+                                      {insights.suggested_opening}
+                                    </p>
+                                  </div>
+                                </div>
+                              )}
+
+                              {insights.personalization_hooks?.length > 0 && (
+                                <div className="space-y-2">
+                                  <p className="text-[10px] text-white/20 uppercase tracking-widest font-bold">
+                                    {t("personalization_hooks")}
+                                  </p>
+                                  <div className="flex flex-wrap gap-2">
+                                    {insights.personalization_hooks.map((hook: string, i: number) => (
+                                      <span key={i} className="px-2.5 py-1 rounded-md bg-white/[0.03] border border-white/10 text-[10px] text-white/60 font-medium">
+                                        {hook}
+                                      </span>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
+                            </div>
                           </div>
-                        ) : (
-                          <div className="p-6 rounded-xl bg-white/[0.03] border border-[#1F1F1F] text-center space-y-2">
-                            <p className="text-[13px] text-white/40 italic">
-                              La séquence sera personnalisée automatiquement dès
-                              que le prospect sera qualifié.
-                            </p>
-                          </div>
-                        )}
+                        );
+                      })()}
+
+                      {/* Company Description section moved here */}
+                      <div className="space-y-4">
+                        <h4 className="text-[10px] font-bold text-white/20 uppercase tracking-[0.2em] px-1">
+                          {t("description_label")}
+                        </h4>
+                        <div className="p-6 rounded-xl bg-white/[0.03] border border-[#1F1F1F]">
+                          <p className="text-[13px] text-white/50 leading-relaxed italic">
+                            {getProspectCompanyDescription(selectedProspect)
+                              ? `"${getProspectCompanyDescription(selectedProspect)}"`
+                              : t("no_description")}
+                          </p>
+                        </div>
                       </div>
 
                       {/* Basic Information Section */}
                       <div className="space-y-4">
                         <h4 className="text-[10px] font-bold text-white/20 uppercase tracking-[0.2em] flex items-center gap-2 px-1">
-                          <Info className="size-3" /> Basic Information
+                          <Info className="size-3" /> {t("basic_information")}
                         </h4>
                         <div className="p-6 rounded-xl bg-white/[0.03] border border-[#1F1F1F] space-y-6">
                           <div className="grid grid-cols-2 gap-y-6 gap-x-4">
                             <div className="space-y-1.5">
                               <p className="text-[10px] text-white/20 uppercase tracking-widest font-bold">
-                                Industry
+                                {t("industry")}
                               </p>
                               <div className="flex items-center gap-2 text-[13px] text-white/70">
                                 <Building2 className="size-3.5 text-white/20 shrink-0" />
@@ -3301,7 +3331,7 @@ campaign: Campaign;
                             </div>
                             <div className="space-y-1.5">
                               <p className="text-[10px] text-white/20 uppercase tracking-widest font-bold">
-                                Size
+                                {t("size")}
                               </p>
                               <div className="flex items-center gap-2 text-[13px] text-white/70">
                                 <Users className="size-3.5 text-white/20 shrink-0" />
@@ -3323,17 +3353,7 @@ campaign: Campaign;
                                 </span>
                               </div>
                             </div>
-                            <div className="space-y-1.5">
-                              <p className="text-[10px] text-white/20 uppercase tracking-widest font-bold">
-                                {t("source_label")}
-                              </p>
-                              <div className="flex items-center gap-2 text-[13px] text-white/70">
-                                <Search className="size-3.5 text-white/20 shrink-0" />
-                                <span className="truncate">
-                                  {selectedProspect.source || "N/A"}
-                                </span>
-                              </div>
-                            </div>
+
                             <div className="space-y-1.5">
                               <p className="text-[10px] text-white/20 uppercase tracking-widest font-bold">
                                 {t("website_label")}
@@ -3449,19 +3469,43 @@ campaign: Campaign;
                         </div>
                       </div>
 
-                      {/* Company Description Section */}
-                      <div className="space-y-4">
-                        <h4 className="text-[10px] font-bold text-white/20 uppercase tracking-[0.2em] px-1">
-                          {t("description_label")}
-                        </h4>
-                        <div className="p-6 rounded-xl bg-white/[0.03] border border-[#1F1F1F]">
-                          <p className="text-[13px] text-white/50 leading-relaxed italic">
-                            {getProspectCompanyDescription(selectedProspect)
-                              ? `"${getProspectCompanyDescription(selectedProspect)}"`
-                              : t("no_description")}
-                          </p>
-                        </div>
-                      </div>
+
+
+                      {/* Experience Section */}
+                      {(() => {
+                        const rawExp = selectedProspect.raw_data?.experience || selectedProspect.extra_data?.experience;
+                        if (!Array.isArray(rawExp) || rawExp.length === 0) return null;
+
+                        return (
+                          <div className="space-y-4">
+                            <h4 className="text-[10px] font-bold text-white/20 uppercase tracking-[0.2em] flex items-center gap-2 px-1">
+                              <Briefcase className="size-3" /> {t("experience_label")}
+                            </h4>
+                            <div className="space-y-3">
+                              {rawExp.map((exp: any, i: number) => (
+                                <div key={i} className="p-4 rounded-xl bg-white/[0.02] border border-white/5 space-y-1">
+                                  <div className="flex justify-between items-start gap-4">
+                                    <p className="text-[13px] font-bold text-white/90">
+                                      {exp.title || exp.role}
+                                    </p>
+                                    <span className="text-[10px] font-medium text-white/30 shrink-0">
+                                      {exp.duration || exp.time}
+                                    </span>
+                                  </div>
+                                  <p className="text-[11px] text-white/50">
+                                    {exp.company || exp.companyName}
+                                  </p>
+                                  {exp.description && (
+                                    <p className="text-[11px] text-white/30 leading-relaxed mt-2 line-clamp-3">
+                                      {exp.description}
+                                    </p>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        );
+                      })()}
                     </div>
 
                     {/* Sticky Footer Action */}

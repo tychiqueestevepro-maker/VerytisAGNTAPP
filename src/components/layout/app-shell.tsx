@@ -157,7 +157,7 @@ export function AppShell({ children, user, initialFlows = [] }: { children: Reac
                               )}
                             >
                               <div className="size-1 rounded-full bg-blue-500/40" />
-                              <span className="truncate">Campagnes</span>
+                              <span className="truncate">{tNav("campaigns")}</span>
                             </Link>
                             <Link
                               href={`${flowHref}/contacts` as any}
@@ -167,7 +167,7 @@ export function AppShell({ children, user, initialFlows = [] }: { children: Reac
                               )}
                             >
                               <div className="size-1 rounded-full bg-blue-500/40" />
-                              <span className="truncate">Contacts</span>
+                              <span className="truncate">{tNav("contacts")}</span>
                             </Link>
                           </div>
                         )}

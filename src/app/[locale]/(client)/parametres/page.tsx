@@ -11,7 +11,7 @@ import { Input } from "@/components/ui/input";
 import { settingsSchema, type SettingsForm } from "@/lib/schemas/settings";
 import { getSettings, updateSettings, getOrganizationMembers } from "@/lib/actions/settings";
 import { cn } from "@/lib/utils";
-import { User, Building2, Users, Brain, Target, Save, Loader2, CheckCircle2, Globe } from "lucide-react";
+import { User, Building2, Users, Target, Save, Loader2, CheckCircle2, Globe } from "lucide-react";
 import { useTranslations, useLocale } from "next-intl";
 import { useRouter, usePathname } from "@/i18n/routing";
 
@@ -46,6 +46,17 @@ export default function ParametresPage() {
       message_style: "short",
       excluded_sectors: [],
       required_fields: [],
+      prospection_playbook_goal: "",
+      prospection_playbook_method: "",
+      prospection_qualification_rules: "",
+      prospection_priority_rules: "",
+      prospection_exclusion_rules: "",
+      prospection_message_angle: "",
+      prospection_require_human_review: true,
+      prospection_auto_accept_above: 80,
+      prospection_review_min: 50,
+      prospection_review_max: 79,
+      prospection_reject_below: 50,
       daily_cost_limit: 0,
       daily_prospect_limit: 0,
       daily_message_limit: 0,
@@ -59,6 +70,7 @@ export default function ParametresPage() {
   const tabs = [
     { id: "profile", label: t("tab_profile"), icon: User },
     { id: "organization", label: t("tab_organization"), icon: Building2 },
+    { id: "prospection", label: t("tab_prospection"), icon: Target },
     ...(userRole === "owner" ? [{ id: "members", label: t("tab_members"), icon: Users }] : []),
   ];
 
@@ -250,6 +262,95 @@ export default function ParametresPage() {
                 </div>
               )}
 
+              {activeTab === "prospection" && (
+                <div className="space-y-8">
+                  <div className="space-y-3">
+                    <span className="text-[11px] font-semibold uppercase tracking-[0.2em] text-white/60 block">
+                      {t("prospection_playbook")}
+                    </span>
+                    <p className="text-sm text-white/40 leading-relaxed">
+                      {t("prospection_playbook_desc")}
+                    </p>
+                  </div>
+
+                  <FormField
+                    label={t("playbook_goal")}
+                    register={form.register("prospection_playbook_goal")}
+                    error={form.formState.errors.prospection_playbook_goal?.message}
+                  />
+
+                  <TextAreaField
+                    label={t("playbook_method")}
+                    register={form.register("prospection_playbook_method")}
+                    error={form.formState.errors.prospection_playbook_method?.message}
+                    rows={3}
+                  />
+
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <TextAreaField
+                      label={t("qualification_rules")}
+                      register={form.register("prospection_qualification_rules")}
+                      error={form.formState.errors.prospection_qualification_rules?.message}
+                      rows={7}
+                    />
+                    <TextAreaField
+                      label={t("priority_rules")}
+                      register={form.register("prospection_priority_rules")}
+                      error={form.formState.errors.prospection_priority_rules?.message}
+                      rows={7}
+                    />
+                    <TextAreaField
+                      label={t("exclusion_rules")}
+                      register={form.register("prospection_exclusion_rules")}
+                      error={form.formState.errors.prospection_exclusion_rules?.message}
+                      rows={7}
+                    />
+                  </div>
+
+                  <TextAreaField
+                    label={t("message_angle")}
+                    register={form.register("prospection_message_angle")}
+                    error={form.formState.errors.prospection_message_angle?.message}
+                    rows={3}
+                  />
+
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    <NumberField
+                      label={t("auto_accept_above")}
+                      register={form.register("prospection_auto_accept_above", { valueAsNumber: true })}
+                      error={form.formState.errors.prospection_auto_accept_above?.message}
+                    />
+                    <NumberField
+                      label={t("review_min")}
+                      register={form.register("prospection_review_min", { valueAsNumber: true })}
+                      error={form.formState.errors.prospection_review_min?.message}
+                    />
+                    <NumberField
+                      label={t("review_max")}
+                      register={form.register("prospection_review_max", { valueAsNumber: true })}
+                      error={form.formState.errors.prospection_review_max?.message}
+                    />
+                    <NumberField
+                      label={t("reject_below")}
+                      register={form.register("prospection_reject_below", { valueAsNumber: true })}
+                      error={form.formState.errors.prospection_reject_below?.message}
+                    />
+                  </div>
+
+                  <label className="flex items-start gap-3 p-4 rounded-2xl border border-white/10 bg-white/[0.03] cursor-pointer">
+                    <input
+                      type="checkbox"
+                      {...form.register("prospection_require_human_review")}
+                      className="mt-1"
+                    />
+                    <span>
+                      <span className="block text-sm font-medium text-white">{t("require_human_review")}</span>
+                      <span className="block text-xs text-white/40 leading-relaxed mt-1">{t("require_human_review_desc")}</span>
+                    </span>
+                  </label>
+                </div>
+              )}
+
               {activeTab === "members" && (
                 <div className="space-y-6">
                   <div className="space-y-4">
@@ -303,6 +404,42 @@ function FormField({ label, register, error, type = "text", placeholder, disable
           "bg-white/[0.03] border-white/10 focus:border-white/30 transition-all h-11",
           error && "border-red-500/50 focus:border-red-500/50",
           disabled && "opacity-50 cursor-not-allowed"
+        )}
+      />
+      {error && <p className="text-[10px] text-red-500 mt-1">{error}</p>}
+    </div>
+  );
+}
+
+function NumberField({ label, register, error }: any) {
+  return (
+    <div className="space-y-2">
+      <span className="text-[10px] uppercase tracking-[0.15em] text-white/40 block">{label}</span>
+      <Input
+        type="number"
+        min={0}
+        max={100}
+        {...register}
+        className={cn(
+          "bg-white/[0.03] border-white/10 focus:border-white/30 transition-all h-11",
+          error && "border-red-500/50 focus:border-red-500/50"
+        )}
+      />
+      {error && <p className="text-[10px] text-red-500 mt-1">{error}</p>}
+    </div>
+  );
+}
+
+function TextAreaField({ label, register, error, rows = 4 }: any) {
+  return (
+    <div className="space-y-2">
+      <span className="text-[10px] uppercase tracking-[0.15em] text-white/40 block">{label}</span>
+      <textarea
+        rows={rows}
+        {...register}
+        className={cn(
+          "w-full bg-white/[0.03] border border-white/10 rounded-lg px-3 py-3 text-sm text-white focus:outline-none focus:border-white/30 transition-all resize-none",
+          error && "border-red-500/50 focus:border-red-500/50"
         )}
       />
       {error && <p className="text-[10px] text-red-500 mt-1">{error}</p>}

@@ -2,6 +2,7 @@ import OpenAI from "openai";
 import { z } from "zod";
 import { getOpenAIKeyForClient } from "@/lib/prospecting/qualification";
 import { Campaign } from "@/types/flows";
+import { normalizeProspectionPlaybook } from "@/lib/prospecting/playbook";
 
 const SequenceStepSchema: z.ZodType<any> = z.lazy(() => z.object({
   type: z.string(), // 'linkedin', 'wait', 'condition', 'end'
@@ -29,6 +30,15 @@ export async function generateSequenceForCampaign(
 ): Promise<GeneratedSequence> {
   const apiKey = await getOpenAIKeyForClient(campaign.organization_id || (campaign as any).client_id);
   const openai = new OpenAI({ apiKey });
+  const playbook = normalizeProspectionPlaybook(campaign.config?.prospection_playbook, {
+    goal: campaign.objective || campaign.target_description || campaign.config?.offer,
+    offer: campaign.config?.offer || campaign.target_description || campaign.objective,
+    tone: campaign.tone || campaign.config?.tone,
+    roles: campaign.target_roles || campaign.config?.personas,
+    industries: campaign.target_industries || campaign.config?.target_icp?.industries,
+    companySizes: campaign.target_company_size || campaign.config?.target_icp?.company_size,
+    locations: campaign.target_locations || campaign.config?.target_icp?.locations,
+  });
 
   const systemPrompt = `
 Tu es un expert en Growth Hacking et Stratégie d'Outreach B2B de classe mondiale (inspiration: Lemlist, Gojibery).
@@ -41,7 +51,8 @@ RÈGLES D'OR DE L'OUTREACH HUMAIN & IMPACTANT :
 4. **Comportement Humain** : Simule un vrai parcours (Visite -> Attente -> Invitation -> Message).
 5. **Relances à valeur ajoutée** : Ne jamais faire de "simple relance". Chaque message doit apporter un nouvel angle, une preuve sociale ou une ressource utile.
 6. **Ton Premium** : Le ton "${campaign.tone || 'Professionnel'}" doit transparaître sans paraître forcé.
-7. **Langue** : Tu DOIS impérativement rédiger TOUS les messages et noms d'étapes en ${campaign.config?.language || 'français'}.
+7. **Playbook métier** : Respecte la méthode, l'angle, le CTA, les validations et les interdits suivants : ${JSON.stringify(playbook, null, 2)}
+8. **Langue** : Tu DOIS impérativement rédiger TOUS les messages et noms d'étapes en ${campaign.config?.language || 'français'}.
 
 STRUCTURE DU JSON RÉCURSIF :
 Tu DOIS répondre avec un objet JSON respectant cette structure, en supportant les branchements (OUI/NON) :

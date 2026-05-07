@@ -7,6 +7,11 @@ import {
   preScoreLabel,
   preScoreProspect,
 } from "./scoring";
+import {
+  getRecentSerpContextForQualification,
+  type RecentSerpContext,
+  type RecentSerpSignal,
+} from "./recent-serp";
 
 export type QualificationLevel = "high" | "medium" | "low";
 
@@ -14,6 +19,8 @@ export interface LLMQualificationResult {
   qualification_level: QualificationLevel;
   qualification_reason: string;
   personalization_hooks: string[];
+  recent_serp_sources?: RecentSerpSignal[];
+  recent_serp_context?: Omit<RecentSerpContext, "sources">;
 }
 
 const QualificationResultSchema = z.object({
@@ -231,6 +238,7 @@ export async function qualifyProspectWithLLM(
   const campaign = normalizeCampaignCriteria(campaignInput);
   const prospect = normalizeProspectData(prospectInput);
   const personalization = extractPersonalizationInsights(prospectInput);
+  const recentSerp = await getRecentSerpContextForQualification(prospect, campaign);
   const savedLevel = prospectInput.pre_score_level === "high" || prospectInput.pre_score_level === "medium" || prospectInput.pre_score_level === "low"
     ? prospectInput.pre_score_level
     : "low";
@@ -253,6 +261,7 @@ export async function qualifyProspectWithLLM(
       tailles_entreprise_cibles: campaign.targetCompanySize,
       ton_demande: campaign.tone,
       source_campagne: campaign.source,
+      playbook_metier: campaign.prospectionPlaybook,
       configuration_complete: sanitizeForPrompt(campaignInput),
     },
     prospect: {
@@ -273,6 +282,7 @@ export async function qualifyProspectWithLLM(
       libelle: preScoreLabel(preScore.level),
       score_interne: preScore.score,
     },
+    sources_recentes_serp: recentSerp,
   };
 
   const userPrompt = `
@@ -289,8 +299,12 @@ Sortie obligatoire :
 
 Règles :
 - Base qualification_level sur l'adéquation entre le prospect et l'objectif de campagne.
+- Applique le playbook métier: règles de qualification, exclusions, priorités, validation humaine et angle d'approche.
+- Utilise sources_recentes_serp pour compenser les données internes faibles, mais uniquement comme preuves publiques récentes.
+- Priorise les sources avec published_at. Les sources "filtered_recent_not_dated" peuvent confirmer un contexte général, pas prouver un événement daté.
 - Explique clairement pourquoi le prospect est adapté ou non avec des éléments précis du profil, de l'entreprise et du parcours.
 - Si l'ancienneté, une prise de poste, une évolution interne ou une expérience passée intéressante est disponible, ajoute-la dans personalization_hooks.
+- Cite uniquement des faits présents dans les données fournies ou dans sources_recentes_serp. Ne transforme jamais une hypothèse SERP en certitude.
 - N'invente aucune information absente.
 - Si les données sont insuffisantes, mets medium ou low et explique-le.
 - **Langue** : Tu DOIS impérativement rédiger qualification_reason et personalization_hooks en ${(campaignInput.config as any)?.language || 'français'}.
@@ -311,5 +325,11 @@ Règles :
   if (!raw) throw new Error("Réponse vide du LLM.");
 
   const parsed = JSON.parse(raw);
-  return QualificationResultSchema.parse(parsed);
+  const result = QualificationResultSchema.parse(parsed);
+  const { sources, ...recentSerpContext } = recentSerp;
+  return {
+    ...result,
+    recent_serp_sources: sources,
+    recent_serp_context: recentSerpContext,
+  };
 }

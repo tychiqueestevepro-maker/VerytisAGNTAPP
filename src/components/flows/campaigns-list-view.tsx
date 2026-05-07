@@ -28,9 +28,17 @@ import {
   Zap,
   X,
   ChevronDown,
+  Info,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { analyzeWebsite, type AnalysisResult } from "@/lib/flows/analyze";
+import {
+  buildDefaultProspectionPlaybook,
+  linesToRules,
+  normalizeProspectionPlaybook,
+  type ProspectionPlaybook,
+} from "@/lib/prospecting/playbook";
 
 import { useTranslations, useLocale } from "next-intl";
 
@@ -52,6 +60,7 @@ interface Campaign {
     personas?: string[];
     tone?: string;
     injection?: { auto_add?: boolean; prioritize_linkedin?: boolean };
+    prospection_playbook?: ProspectionPlaybook;
   };
 }
 
@@ -104,6 +113,7 @@ export function CampaignsListView({
     { key: "icp", icon: Target, title: t("wizard_step_2_title"), subtitle: t("wizard_step_2_sub") },
     { key: "location", icon: MapPin, title: t("wizard_step_3_title"), subtitle: t("wizard_step_3_sub") },
     { key: "tone", icon: MessageSquare, title: t("wizard_step_4_title"), subtitle: t("wizard_step_4_sub") },
+    { key: "playbook", icon: Briefcase, title: t("wizard_step_6_title"), subtitle: t("wizard_step_6_sub") },
     { key: "ops", icon: Settings2, title: t("wizard_step_5_title"), subtitle: t("wizard_step_5_sub") },
   ];
 
@@ -137,6 +147,12 @@ export function CampaignsListView({
   const [invitationsPerDay, setInvitationsPerDay] = useState(10);
   const [autoAdd, setAutoAdd] = useState(true);
   const [linkedinRequired, setLinkedinRequired] = useState(true);
+  const [playbookMethod, setPlaybookMethod] = useState(t("playbook_method_default"));
+  const [qualificationLogic, setQualificationLogic] = useState(t("playbook_qualification_default"));
+  const [exclusionLogic, setExclusionLogic] = useState(t("playbook_exclusion_default"));
+  const [priorityLogic, setPriorityLogic] = useState(t("playbook_priority_default"));
+  const [messageAngle, setMessageAngle] = useState(t("playbook_angle_default"));
+  const [humanReview, setHumanReview] = useState(true);
 
   // Scan animation
   useEffect(() => {
@@ -168,6 +184,19 @@ export function CampaignsListView({
     setLocations(d.locations || t.raw("default_locations"));
     setSources(t.raw("default_sources"));
     setTone(d.tone || t("default_tone"));
+    
+    // Personalized Playbook from AI
+    if (d.playbook) {
+      setQualificationLogic(d.playbook.qualification?.join("\n") || t("playbook_qualification_default"));
+      setPriorityLogic(d.playbook.priority?.join("\n") || t("playbook_priority_default"));
+      setExclusionLogic(d.playbook.exclusion?.join("\n") || t("playbook_exclusion_default"));
+      setMessageAngle(d.playbook.angle || t("playbook_angle_default"));
+    } else {
+      setQualificationLogic(t("playbook_qualification_default"));
+      setPriorityLogic(t("playbook_priority_default"));
+      setExclusionLogic(t("playbook_exclusion_default"));
+      setMessageAngle(t("playbook_angle_default"));
+    }
 
     try {
       const host = new URL(url.trim()).hostname.replace("www.", "");
@@ -185,6 +214,42 @@ export function CampaignsListView({
     startTransition(async () => {
       setAnalyzeError(null);
       try {
+        const defaultPlaybook = buildDefaultProspectionPlaybook({
+          goal: offer,
+          offer,
+          tone,
+          roles,
+          industries,
+          companySizes: t.raw("company_sizes"),
+          locations,
+          exclusions: [],
+        });
+        const prospectionPlaybook = normalizeProspectionPlaybook({
+          ...defaultPlaybook,
+          goal: offer,
+          method: playbookMethod,
+          qualification_rules: linesToRules(qualificationLogic, 25),
+          exclusion_rules: linesToRules(exclusionLogic, 50),
+          priority_rules: linesToRules(priorityLogic, 20),
+          validation_policy: {
+            ...defaultPlaybook.validation_policy,
+            require_human_validation: humanReview,
+          },
+          message_strategy: {
+            ...defaultPlaybook.message_strategy,
+            tone,
+            angle: messageAngle,
+          },
+        }, {
+          goal: offer,
+          offer,
+          tone,
+          roles,
+          industries,
+          companySizes: t.raw("company_sizes"),
+          locations,
+        });
+
         const config = {
           target_description: offer,
           target_icp: {
@@ -198,6 +263,7 @@ export function CampaignsListView({
           offer: offer,
           prospection: {
             mode: "auto",
+            prospects_per_day: messagesPerDay + invitationsPerDay,
             messages_per_day: messagesPerDay,
             invitations_per_day: invitationsPerDay,
             search_time: "09:00",
@@ -210,6 +276,7 @@ export function CampaignsListView({
             ignore_duplicates: true,
             prioritize_linkedin: linkedinRequired,
           },
+          prospection_playbook: prospectionPlaybook,
           language: locale === "en" ? "english" : "français",
         };
 
@@ -417,7 +484,7 @@ export function CampaignsListView({
                     </div>
                   </div>
                   <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-white/20 bg-white/5 px-3 py-1 rounded-full font-mono">
-                    {t("wizard_step_indicator", { current: currentStep + 1, total: 5 })}
+                    {t("wizard_step_indicator", { current: currentStep + 1, total: WIZARD_STEPS.length })}
                   </span>
                 </div>
 
@@ -565,11 +632,11 @@ export function CampaignsListView({
                     </div>
                   )}
 
-                  {currentStep === 4 && (
-                    <div className="space-y-8">
+                  {currentStep === 5 && (
+                    <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
                       <div className="space-y-4">
                         {/* Messages Counter */}
-                        <div className="flex items-center justify-between p-6 bg-white/[0.02] border border-white/5 rounded-2xl">
+                        <div className="flex items-center justify-between p-6 bg-white/[0.02] border border-white/5 rounded-2xl hover:bg-white/[0.04] transition-colors">
                           <div>
                             <p className="text-sm font-bold text-white mb-1">{t("ops_messages")}</p>
                             <p className="text-[10px] text-white/30 font-medium">{t("ops_messages_desc")}</p>
@@ -587,7 +654,7 @@ export function CampaignsListView({
                         </div>
 
                         {/* Invitations Counter */}
-                        <div className="flex items-center justify-between p-6 bg-white/[0.02] border border-white/5 rounded-2xl">
+                        <div className="flex items-center justify-between p-6 bg-white/[0.02] border border-white/5 rounded-2xl hover:bg-white/[0.04] transition-colors">
                           <div>
                             <p className="text-sm font-bold text-white mb-1">{t("ops_invitations")}</p>
                             <p className="text-[10px] text-white/30 font-medium">{t("ops_invitations_desc")}</p>
@@ -609,22 +676,120 @@ export function CampaignsListView({
                         <button
                           onClick={() => setAutoAdd(!autoAdd)}
                           className={`p-6 rounded-2xl border text-left transition-all ${
-                            autoAdd ? "bg-white/[0.08] border-white/20" : "bg-white/[0.02] border-white/5"
+                            autoAdd ? "bg-white/[0.08] border-white/20 shadow-[0_0_20px_rgba(255,255,255,0.02)]" : "bg-white/[0.02] border-white/5"
                           }`}
                         >
-                          <p className="text-sm font-bold text-white mb-1">{t("ops_auto")}</p>
+                          <div className="flex items-center justify-between mb-2">
+                            <p className="text-sm font-bold text-white">{t("ops_auto")}</p>
+                            <div className={`size-2 rounded-full ${autoAdd ? "bg-blue-500 animate-pulse" : "bg-white/10"}`} />
+                          </div>
                           <p className="text-[10px] text-white/30 leading-relaxed">{t("ops_auto_desc")}</p>
                         </button>
                         <button
                           onClick={() => setLinkedinRequired(!linkedinRequired)}
                           className={`p-6 rounded-2xl border text-left transition-all ${
-                            linkedinRequired ? "bg-white/[0.08] border-white/20" : "bg-white/[0.02] border-white/5"
+                            linkedinRequired ? "bg-white/[0.08] border-white/20 shadow-[0_0_20px_rgba(255,255,255,0.02)]" : "bg-white/[0.02] border-white/5"
                           }`}
                         >
-                          <p className="text-sm font-bold text-white mb-1">{t("ops_autonomous")}</p>
+                          <div className="flex items-center justify-between mb-2">
+                            <p className="text-sm font-bold text-white">{t("ops_autonomous")}</p>
+                            <div className={`size-2 rounded-full ${linkedinRequired ? "bg-emerald-500 animate-pulse" : "bg-white/10"}`} />
+                          </div>
                           <p className="text-[10px] text-white/30 leading-relaxed">{t("ops_autonomous_desc")}</p>
                         </button>
                       </div>
+                    </div>
+                  )}
+
+                  {currentStep === 4 && (
+                    <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+                      <TooltipProvider delay={200}>
+                        <div className="space-y-6">
+                          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                            <div className="space-y-3">
+                              <div className="flex items-center gap-2 ml-1">
+                                <label className="text-[10px] font-bold uppercase tracking-[0.15em] text-white/30">{t("playbook_qualification_label") || "Qualification"}</label>
+                                <Tooltip>
+                                  <TooltipTrigger>
+                                    <Info className="size-3 text-white/20 hover:text-white/40 transition-colors" />
+                                  </TooltipTrigger>
+                                  <TooltipContent side="top" className="max-w-xs p-3">
+                                    <p className="font-bold mb-1">{t("playbook_qualification_help_title") || "Filtre de pertinence"}</p>
+                                    <p className="opacity-70 leading-relaxed text-[10px]">{t("playbook_qualification_help_desc") || "Critères éliminatoires. L'IA rejette immédiatement tout prospect ne validant pas ces points."}</p>
+                                  </TooltipContent>
+                                </Tooltip>
+                              </div>
+                              <textarea
+                                value={qualificationLogic}
+                                onChange={(e) => setQualificationLogic(e.target.value)}
+                                placeholder={t("playbook_qualification_placeholder")}
+                                className="h-40 w-full bg-white/[0.03] border border-white/10 rounded-2xl p-5 text-xs text-white/80 focus:outline-none focus:border-white/30 resize-none leading-relaxed"
+                              />
+                            </div>
+                            <div className="space-y-3">
+                              <div className="flex items-center gap-2 ml-1">
+                                <label className="text-[10px] font-bold uppercase tracking-[0.15em] text-white/30">{t("playbook_priority_label") || "Signaux & Personnalisation"}</label>
+                                <Tooltip>
+                                  <TooltipTrigger>
+                                    <Info className="size-3 text-white/20 hover:text-white/40 transition-colors" />
+                                  </TooltipTrigger>
+                                  <TooltipContent side="top" className="max-w-xs p-3">
+                                    <p className="font-bold mb-1">{t("playbook_priority_help_title") || "Crochets de personnalisation"}</p>
+                                    <p className="opacity-70 leading-relaxed text-[10px]">{t("playbook_priority_help_desc") || "Définit les détails du profil (post récent, nouveau job) que l'IA doit utiliser pour prouver la pertinence de l'approche."}</p>
+                                  </TooltipContent>
+                                </Tooltip>
+                              </div>
+                              <textarea
+                                value={priorityLogic}
+                                onChange={(e) => setPriorityLogic(e.target.value)}
+                                placeholder={t("playbook_priority_placeholder")}
+                                className="h-40 w-full bg-white/[0.03] border border-white/10 rounded-2xl p-5 text-xs text-white/80 focus:outline-none focus:border-white/30 resize-none leading-relaxed"
+                              />
+                            </div>
+                            <div className="space-y-3">
+                              <div className="flex items-center gap-2 ml-1">
+                                <label className="text-[10px] font-bold uppercase tracking-[0.15em] text-white/30">{t("playbook_exclusion_label") || "Exclusion"}</label>
+                                <Tooltip>
+                                  <TooltipTrigger>
+                                    <Info className="size-3 text-white/20 hover:text-white/40 transition-colors" />
+                                  </TooltipTrigger>
+                                  <TooltipContent side="top" className="max-w-xs p-3">
+                                    <p className="font-bold mb-1">{t("playbook_exclusion_help_title") || "Zones d'ombre"}</p>
+                                    <p className="opacity-70 leading-relaxed text-[10px]">{t("playbook_exclusion_help_desc") || "Rôles ou secteurs à éviter absolument pour protéger votre réputation de marque."}</p>
+                                  </TooltipContent>
+                                </Tooltip>
+                              </div>
+                              <textarea
+                                value={exclusionLogic}
+                                onChange={(e) => setExclusionLogic(e.target.value)}
+                                placeholder={t("playbook_exclusion_placeholder")}
+                                className="h-40 w-full bg-white/[0.03] border border-white/10 rounded-2xl p-5 text-xs text-white/80 focus:outline-none focus:border-white/30 resize-none leading-relaxed"
+                              />
+                            </div>
+                          </div>
+
+                          <div className="space-y-3">
+                            <div className="flex items-center gap-2 ml-1">
+                              <label className="text-[10px] font-bold uppercase tracking-[0.15em] text-white/30">{t("playbook_angle_label") || "Angle du message"}</label>
+                              <Tooltip>
+                                <TooltipTrigger>
+                                  <Info className="size-3 text-white/20 hover:text-white/40 transition-colors" />
+                                </TooltipTrigger>
+                                <TooltipContent side="top" className="max-w-xs p-3">
+                                  <p className="font-bold mb-1">{t("playbook_angle_help_title") || "Psychologie de vente"}</p>
+                                  <p className="opacity-70 leading-relaxed text-[10px]">{t("playbook_angle_help_desc") || "L'axe narratif utilisé par l'IA pour susciter l'intérêt sans paraître trop commercial."}</p>
+                                </TooltipContent>
+                              </Tooltip>
+                            </div>
+                            <textarea
+                              value={messageAngle}
+                              onChange={(e) => setMessageAngle(e.target.value)}
+                              placeholder={t("playbook_angle_placeholder")}
+                              className="h-24 w-full bg-white/[0.03] border border-white/10 rounded-2xl p-5 text-sm text-white/80 focus:outline-none focus:border-white/30 resize-none leading-relaxed shadow-inner"
+                            />
+                          </div>
+                        </div>
+                      </TooltipProvider>
                     </div>
                   )}
                 </div>
